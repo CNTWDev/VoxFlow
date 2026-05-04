@@ -48,13 +48,18 @@ pub fn run() {
 
             let shortcut_builder =
                 tauri_plugin_global_shortcut::Builder::new().with_handler(handle_global_shortcut);
-            let shortcut_plugin = match shortcut_builder.with_shortcut(hotkey.as_str()) {
-                Ok(builder) => builder.build(),
-                Err(e) => {
-                    tracing::warn!("global hotkey '{hotkey}' could not be registered: {e}");
-                    tauri_plugin_global_shortcut::Builder::new()
-                        .with_handler(handle_global_shortcut)
-                        .build()
+            // "Fn" is handled exclusively by platform_hotkey (CGEventTap); skip plugin registration.
+            let shortcut_plugin = if hotkey.to_lowercase() == "fn" {
+                shortcut_builder.build()
+            } else {
+                match shortcut_builder.with_shortcut(hotkey.as_str()) {
+                    Ok(builder) => builder.build(),
+                    Err(e) => {
+                        tracing::warn!("global hotkey '{hotkey}' could not be registered: {e}");
+                        tauri_plugin_global_shortcut::Builder::new()
+                            .with_handler(handle_global_shortcut)
+                            .build()
+                    }
                 }
             };
             app.handle().plugin(shortcut_plugin)?;

@@ -37,7 +37,7 @@ pub fn check_system_permissions() -> Vec<SystemPermissionStatus> {
 pub fn emit_system_permissions<R: Runtime>(handle: &AppHandle<R>) {
     let statuses = check_system_permissions();
     if statuses.iter().any(|status| !status.granted) {
-        tracing::warn!("system permissions missing: {statuses:?}");
+        tracing::info!("system permissions not yet granted: {statuses:?}");
     }
     if let Err(e) = handle.emit("vox://permissions", statuses) {
         tracing::warn!("permission event emit failed: {e}");
