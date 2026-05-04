@@ -1,0 +1,12 @@
+[package]
+name = "vf-inject"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+arboard = "3"
+enigo = "0.3"

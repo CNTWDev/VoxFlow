@@ -1,0 +1,16 @@
+[package]
+name = "vf-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+vf-audio = { path = "../vf-audio" }
+vf-asr = { path = "../vf-asr" }
+vf-inject = { path = "../vf-inject" }
+vf-config = { path = "../vf-config" }
+tokio.workspace = true
+async-trait.workspace = true
+serde = { workspace = true }
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true

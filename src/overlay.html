@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vox Flow Status</title>
+  <style>
+    :root {
+      --glass: rgba(20, 18, 14, .78);
+      --line: rgba(246, 239, 224, .16);
+      --text: #f8f0df;
+      --muted: rgba(248, 240, 223, .62);
+      --accent: #f2b84b;
+      --green: #61d394;
+      --blue: #72a8ff;
+      --red: #ff6b57;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      user-select: none;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+      padding: 10px;
+    }
+
+    .pill {
+      width: 100%;
+      min-height: 88px;
+      display: grid;
+      grid-template-columns: 52px 1fr auto;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 16% 20%, rgba(242, 184, 75, .26), transparent 36%),
+        linear-gradient(135deg, rgba(34, 30, 23, .92), var(--glass));
+      box-shadow: 0 22px 60px rgba(0,0,0,.36), inset 0 1px 0 rgba(255,255,255,.08);
+      backdrop-filter: blur(24px);
+      transform: translateY(18px) scale(.96);
+      opacity: 0;
+      transition: opacity .18s ease, transform .22s cubic-bezier(.2,.8,.2,1);
+    }
+
+    .pill.visible {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    .orb {
+      width: 46px;
+      height: 46px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: rgba(242, 184, 75, .14);
+      color: var(--accent);
+      position: relative;
+    }
+
+    .orb::after {
+      content: "";
+      position: absolute;
+      inset: 6px;
+      border-radius: inherit;
+      border: 1px solid currentColor;
+      opacity: .3;
+    }
+
+    .status-recording .orb {
+      color: var(--red);
+      animation: breathe 1.15s ease-in-out infinite;
+    }
+
+    .status-processing .orb { color: var(--blue); }
+    .status-injecting, .status-success .orb { color: var(--green); }
+    .status-error .orb { color: var(--red); }
+
+    .glyph {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 22px currentColor;
+    }
+
+    .copy {
+      min-width: 0;
+    }
+
+    .title {
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: -.02em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .detail {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .meter {
+      display: flex;
+      align-items: end;
+      gap: 3px;
+      height: 28px;
+      padding-right: 2px;
+    }
+
+    .bar {
+      width: 4px;
+      border-radius: 999px;
+      background: var(--accent);
+      opacity: .58;
+      transform-origin: bottom;
+      animation: level 900ms ease-in-out infinite;
+    }
+
+    .bar:nth-child(2) { animation-delay: 90ms; }
+    .bar:nth-child(3) { animation-delay: 180ms; }
+    .bar:nth-child(4) { animation-delay: 270ms; }
+    .bar:nth-child(5) { animation-delay: 360ms; }
+
+    .status-processing .bar,
+    .status-injecting .bar {
+      background: var(--blue);
+      animation: sweep 900ms ease-in-out infinite;
+    }
+
+    .status-success .bar {
+      background: var(--green);
+      animation: none;
+      height: 18px;
+    }
+
+    .status-error .bar {
+      background: var(--red);
+      animation: none;
+      height: 10px;
+    }
+
+    @keyframes breathe {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 87, .22); }
+      50% { box-shadow: 0 0 0 12px rgba(255, 107, 87, 0); }
+    }
+
+    @keyframes level {
+      0%, 100% { height: 9px; }
+      50% { height: 26px; }
+    }
+
+    @keyframes sweep {
+      0%, 100% { height: 10px; opacity: .35; }
+      50% { height: 24px; opacity: .9; }
+    }
+  </style>
+</head>
+<body>
+  <div id="pill" class="pill" aria-live="polite">
+    <div class="orb"><div class="glyph"></div></div>
+    <div class="copy">
+      <div id="title" class="title">Vox Flow</div>
+      <div id="detail" class="detail">Ready when you are.</div>
+    </div>
+    <div class="meter" aria-hidden="true">
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+    </div>
+  </div>
+
+  <script>
+    const { listen } = window.__TAURI__.event;
+    const pill = document.getElementById('pill');
+    const title = document.getElementById('title');
+    const detail = document.getElementById('detail');
+    let hideTimer = null;
+    let stickyUntil = 0;
+
+    const copy = {
+      Recording: ['正在聆听', '松开 Fn，我会整理并输入到当前光标位置'],
+      Processing: ['正在整理', '识别语音，并转换成可直接发送的文字'],
+      Injecting: ['正在输入', '马上填入当前应用的焦点文本框'],
+      Success: ['已输入', '内容已经放到当前光标位置'],
+      Error: ['没有完成', '请检查麦克风、权限或服务配置'],
+    };
+
+    function setOverlay(kind, message) {
+      clearTimeout(hideTimer);
+      if (kind === 'Success' || kind === 'Error') {
+        stickyUntil = Date.now() + (kind === 'Success' ? 1200 : 2500);
+      } else {
+        stickyUntil = 0;
+      }
+      const [main, sub] = copy[kind] || copy.Processing;
+      pill.className = `pill visible status-${kind.toLowerCase()}`;
+      title.textContent = main;
+      detail.textContent = message || sub;
+    }
+
+    function hideSoon(delay = 1200) {
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        pill.className = 'pill';
+      }, delay);
+    }
+
+    listen('vox://event', event => {
+      const data = event.payload;
+      if (!data || !data.type) return;
+
+      if (data.type === 'StateChanged') {
+        const state = typeof data.state === 'string' ? data.state : data.state?.state;
+        if (state === 'Recording' || state === 'Processing' || state === 'Injecting') {
+          setOverlay(state);
+        } else if (state === 'Idle') {
+          if (Date.now() < stickyUntil) return;
+          hideSoon(350);
+        }
+      } else if (data.type === 'Transcription') {
+        setOverlay('Success');
+        hideSoon(1300);
+      } else if (data.type === 'Error') {
+        setOverlay('Error', data.message);
+        hideSoon(2600);
+      }
+    }).catch(console.error);
+  </script>
+</body>
+</html>

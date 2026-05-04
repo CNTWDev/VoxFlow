@@ -1,0 +1,36 @@
+[package]
+name = "vox-flow-app"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "vox_flow_app_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "vox-flow-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+vf-core = { path = "../crates/vf-core" }
+vf-config = { path = "../crates/vf-config" }
+vf-asr = { path = "../crates/vf-asr" }
+vf-audio = { path = "../crates/vf-audio" }
+vf-inject = { path = "../crates/vf-inject" }
+
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-shell = "2"
+tauri-plugin-global-shortcut = "2.3.1"
+
+tokio.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-graphics = "0.25"
