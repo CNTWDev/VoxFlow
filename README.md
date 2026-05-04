@@ -8,11 +8,13 @@
 
 ## 功能
 
-- 全局快捷键触发录音（`Option+Space` on macOS，`Ctrl+Alt+Space` on Windows）
+- 全局快捷键触发录音（macOS：`Option+Space` 或 `Fn` 长按；Windows：`Ctrl+Alt+Space`）
 - 两种触发模式：**按住录音**（HoldKey）/ **按一下开，再按关**（ToggleKey）
-- ASR 双路：**云端** OpenAI `gpt-4o-transcribe` / **本地** Whisper.cpp（离线）
+- ASR 三路：**OpenAI** `gpt-4o-transcribe` / **VoxNexus** 云端 / **本地** Whisper.cpp（离线）
 - Language Profile 系统：每个 Profile 独立绑定语言、模型、prompt，热键切换
 - 转录完成后通过剪贴板模拟粘贴，文字注入当前焦点窗口
+- 透明状态 Overlay：始终置顶、点击穿透，展示录音 / 处理 / 注入 / 完成四态动画
+- 权限检测（Input Monitoring / Accessibility），应用启动时自动检查并可一键跳转系统设置
 - 配置持久化到系统标准目录（TOML）
 
 ---
@@ -51,7 +53,7 @@ cargo tauri build
 - macOS：`Vox Flow.app` + `.dmg`
 - Windows：`.msi` + NSIS 安装包
 
-> 当前版本（Phase 4）未签名。macOS 首次打开若被 Gatekeeper 拦截，在**系统设置 → 隐私与安全性**手动允许，或执行：
+> 当前版本（Phase 5）未签名。macOS 首次打开若被 Gatekeeper 拦截，在**系统设置 → 隐私与安全性**手动允许，或执行：
 > ```bash
 > xattr -cr "Vox Flow.app"
 > ```
@@ -72,7 +74,7 @@ active_profile_id = "auto"
 [profiles.auto]
 display_name = "Auto Detect"
 [profiles.auto.backend]
-type = "Cloud"
+type = "OpenAi"
 model = "gpt-4o-transcribe"
 
 [profiles.zh]
@@ -80,8 +82,16 @@ display_name = "中文"
 language_hint = "zh"
 prompt = "输出简体中文，保留中英文混排。"
 [profiles.zh.backend]
-type = "Cloud"
+type = "OpenAi"
 model = "gpt-4o-mini-transcribe"
+
+[profiles.vn]
+display_name = "VoxNexus 超清"
+[profiles.vn.backend]
+type = "VoxNexus"
+model_id = "vn-stt-ultra"
+enable_timestamps = false
+enable_speaker_diarization = false
 
 [profiles.en-local]
 display_name = "English (Offline)"
@@ -92,9 +102,11 @@ model_path = "/path/to/ggml-base.en.bin"
 
 [app]
 activation_mode = "ToggleKey"   # 或 "HoldKey"
-hotkey = "Option+Space"
+hotkey = "Option+Space"         # macOS 也可设为 "Fn"（需 Input Monitoring 权限）
 global_api_key = "sk-..."       # OpenAI API key（Phase 9 前明文存储）
 ```
+
+> **注意**：`ProfileBackendConfig` 的 `type` 字段已从旧版 `"Cloud"` 改为 `"OpenAi"`，升级时需手动更新配置文件。
 
 ---
 
@@ -104,11 +116,11 @@ global_api_key = "sk-..."       # OpenAI API key（Phase 9 前明文存储）
 vox-flow/
 ├── crates/
 │   ├── vf-audio/      # 麦克风采集 + 重采样到 16kHz mono f32
-│   ├── vf-asr/        # AsrBackend trait，Cloud（OpenAI）+ Local（Whisper.cpp）
+│   ├── vf-asr/        # AsrBackend trait，OpenAI + VoxNexus + Local（Whisper.cpp）
 │   ├── vf-inject/     # 剪贴板注入 + enigo 模拟粘贴
 │   ├── vf-config/     # AppConfig + LanguageProfile + TOML 持久化
 │   └── vf-core/       # VoxEngine 状态机，编排录音→ASR→注入全流程
-└── src-tauri/         # Tauri shell，前端 UI，Tauri commands
+└── src-tauri/         # Tauri shell，前端 UI，overlay，全局快捷键，权限检测
 ```
 
 所有 `vf-*` crate 不依赖 Tauri，可单独 `cargo test`。
@@ -145,10 +157,10 @@ RUST_LOG=debug cargo tauri dev
 | 2 | ✅ | Cloud ASR（OpenAI Transcription API） |
 | 3 | ✅ | 剪贴板注入，文字进光标位置 |
 | 4 | ✅ | 状态机完善 + 错误恢复 + mock 测试 |
-| 5 | ⬜ | 全局快捷键（HoldKey + ToggleKey） |
+| 5 | ✅ | 全局快捷键（HoldKey + ToggleKey）+ macOS Fn 专项监听 + 状态 Overlay + 权限检测 + VoxNexus ASR |
 | 6 | ⬜ | VAD 自动停止 |
-| 7 | ⬜ | Local Whisper.cpp + Profile 切换 |
-| 8 | ⬜ | 设置 UI + 系统托盘 + 权限提示 |
+| 7 | ⬜ | Local Whisper.cpp + Profile 切换 UI |
+| 8 | ⬜ | 设置 UI + 系统托盘 |
 | 9 | ⬜ | API Key → Keychain + 签名 + 公证 + CI |
 
 ---
@@ -158,7 +170,8 @@ RUST_LOG=debug cargo tauri dev
 ### macOS
 - 首次使用需授权**麦克风**（系统设置 → 隐私 → 麦克风）
 - 文字注入需授权 **Accessibility**（系统设置 → 隐私 → 辅助功能）
-- 快捷键统一使用 `Option+Space`（而非 `Alt+Space`）
+- 使用 `Fn` 长按热键还需授权 **Input Monitoring**（系统设置 → 隐私 → 输入监控）
+- 标准快捷键使用 `Option+Space`；若设为 `"Fn"`，则通过 `CGEventTap` 监听，与其他快捷键框架互不干扰
 
 ### Windows
 - 麦克风权限需在系统设置手动开启（无法通过代码请求）
