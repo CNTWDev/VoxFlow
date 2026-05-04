@@ -30,6 +30,13 @@
     "targets": "all",
     "icon": [
       "icons/icon.png"
-    ]
+    ],
+    "macOS": {
+      "infoPlist": {
+        "NSInputMonitoringUsageDescription": "用于监听 Fn 按键，开始和结束录音。",
+        "NSAccessibilityUsageDescription": "用于把转写的文字粘贴到当前焦点应用。",
+        "NSMicrophoneUsageDescription": "用于录制语音并进行语音识别。"
+      }
+    }
   }
 }
