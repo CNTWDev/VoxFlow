@@ -741,9 +741,9 @@
         permissionAction: '去开启',
         permissionRefresh: '重新检查',
         permissionAccessibilityTitle: '辅助功能',
-        permissionAccessibilityDesc: '允许 Vox Flow 把整理后的文字输入到当前焦点应用。',
+        permissionAccessibilityDesc: '允许 Vox Flow 把整理后的文字输入到当前焦点应用。若已开启但仍提示，请关闭后重新开启，并重启 Vox Flow。',
         permissionInputMonitoringTitle: '输入监控',
-        permissionInputMonitoringDesc: '允许 Vox Flow 在任何应用中监听 Fn 长按，用于开始和结束录音。',
+        permissionInputMonitoringDesc: '允许 Vox Flow 在任何应用中监听 Fn 长按。覆盖安装后若仍提示，请关闭后重新开启，并重启 Vox Flow。',
         emptyHistory: '还没有语音输入记录。<br>成功输入的内容会保存在这里，按时间倒序展示。',
       },
       en: {
@@ -802,9 +802,9 @@
         permissionAction: 'Open Settings',
         permissionRefresh: 'Check again',
         permissionAccessibilityTitle: 'Accessibility',
-        permissionAccessibilityDesc: 'Allows Vox Flow to insert polished text into the currently focused app.',
+        permissionAccessibilityDesc: 'Allows Vox Flow to insert polished text into the focused app. If it still appears missing, toggle it off and on, then restart Vox Flow.',
         permissionInputMonitoringTitle: 'Input Monitoring',
-        permissionInputMonitoringDesc: 'Allows Vox Flow to detect Fn hold globally to start and stop recording.',
+        permissionInputMonitoringDesc: 'Allows Vox Flow to detect Fn hold globally. After replacing the app, toggle it off and on if macOS still reports it missing.',
         emptyHistory: 'No voice input history yet.<br>Successful inputs will be saved here in reverse chronological order.',
       },
     };
@@ -1335,6 +1335,7 @@
     loadHistory();
     load().catch(e => { errorEl.textContent = String(e); });
     checkPermissions();
+    setInterval(checkPermissions, 5000);
 </script>
 </body>
 </html>

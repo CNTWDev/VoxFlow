@@ -59,14 +59,24 @@ pub fn open_system_permission_settings(permission: &str) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 mod macos {
+    use core_foundation::{
+        base::TCFType,
+        boolean::CFBoolean,
+        dictionary::{CFDictionary, CFDictionaryRef},
+        string::{CFString, CFStringRef},
+    };
+
     #[link(name = "ApplicationServices", kind = "framework")]
     extern "C" {
         fn AXIsProcessTrusted() -> bool;
+        fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
+        static kAXTrustedCheckOptionPrompt: CFStringRef;
     }
 
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
         fn CGPreflightListenEventAccess() -> bool;
+        fn CGRequestListenEventAccess() -> bool;
     }
 
     pub fn accessibility_granted() -> bool {
@@ -79,8 +89,14 @@ mod macos {
 
     pub fn open_system_permission_settings(permission: &str) -> Result<(), String> {
         let pane = match permission {
-            "accessibility" => "Privacy_Accessibility",
-            "input_monitoring" => "Privacy_ListenEvent",
+            "accessibility" => {
+                let _ = request_accessibility_prompt();
+                "Privacy_Accessibility"
+            }
+            "input_monitoring" => {
+                let _ = unsafe { CGRequestListenEventAccess() };
+                "Privacy_ListenEvent"
+            }
             other => return Err(format!("unknown permission: {other}")),
         };
         let url = format!("x-apple.systempreferences:com.apple.preference.security?{pane}");
@@ -95,5 +111,12 @@ mod macos {
                     Err(format!("open system settings failed with status {status}"))
                 }
             })
+    }
+
+    fn request_accessibility_prompt() -> bool {
+        let key = unsafe { CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt) };
+        let value = CFBoolean::true_value();
+        let options = CFDictionary::from_CFType_pairs(&[(key, value)]);
+        unsafe { AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef()) }
     }
 }
