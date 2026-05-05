@@ -10,7 +10,7 @@
 
 - 全局快捷键触发录音（macOS：`Option+Space` 或 `Fn` 长按；Windows：`Ctrl+Alt+Space`）
 - 两种触发模式：**按住录音**（HoldKey）/ **按一下开，再按关**（ToggleKey）
-- ASR 三路：**OpenAI** `gpt-4o-transcribe` / **VoxNexus** 云端 / **本地** Whisper.cpp（离线）
+- ASR 三路：**OpenAI** `gpt-4o-transcribe` / **VoxNexus** REST + WebSocket / **本地** Whisper.cpp（离线）
 - Language Profile 系统：每个 Profile 独立绑定语言、模型、prompt，热键切换
 - 转录完成后通过剪贴板模拟粘贴，文字注入当前焦点窗口
 - 透明状态 Overlay：始终置顶、点击穿透，展示录音 / 处理 / 注入 / 完成四态动画
@@ -90,6 +90,7 @@ display_name = "VoxNexus 超清"
 [profiles.vn.backend]
 type = "VoxNexus"
 model_id = "vn-stt-ultra"
+transport = "web_socket_streaming" # 或 "rest_batch"
 enable_timestamps = false
 enable_speaker_diarization = false
 
@@ -107,6 +108,17 @@ global_api_key = "sk-..."       # OpenAI API key（Phase 9 前明文存储）
 ```
 
 > **注意**：`ProfileBackendConfig` 的 `type` 字段已从旧版 `"Cloud"` 改为 `"OpenAi"`，升级时需手动更新配置文件。
+
+### VoxNexus WebSocket
+
+VoxNexus profile 可选择两种请求方式：
+
+| transport | 说明 |
+|---|---|
+| `rest_batch` | 停止录音后上传完整 WAV，返回最终文本 |
+| `web_socket_streaming` | 连接 `wss://api.voxnexus.ai/v1/stt/realtime?token=...`，发送 PCM16 audio chunks，接收 `ready` / `partial` / `final` / `error` |
+
+当前版本已经在 `vf-asr` 层实现 VoxNexus `StreamingTranscriber`，包括 partial/final 事件解析。应用主流程仍是“松开热键后转写并注入”；真正边录边显示 partial 的 UI 流式体验会在录音管线改为边采集边推送后接上。
 
 ---
 
@@ -157,7 +169,7 @@ RUST_LOG=debug cargo tauri dev
 | 2 | ✅ | Cloud ASR（OpenAI Transcription API） |
 | 3 | ✅ | 剪贴板注入，文字进光标位置 |
 | 4 | ✅ | 状态机完善 + 错误恢复 + mock 测试 |
-| 5 | ✅ | 全局快捷键（HoldKey + ToggleKey）+ macOS Fn 专项监听 + 状态 Overlay + 权限检测 + VoxNexus ASR |
+| 5 | ✅ | 全局快捷键（HoldKey + ToggleKey）+ macOS Fn 专项监听 + 状态 Overlay + 权限检测 + VoxNexus REST/WebSocket ASR |
 | 6 | ⬜ | VAD 自动停止 |
 | 7 | ⬜ | Local Whisper.cpp + Profile 切换 UI |
 | 8 | ⬜ | 设置 UI + 系统托盘 |

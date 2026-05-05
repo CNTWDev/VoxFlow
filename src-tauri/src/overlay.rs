@@ -1,4 +1,4 @@
-use tauri::{Manager, PhysicalPosition, Runtime, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, PhysicalPosition, Runtime, WebviewUrl, WebviewWindowBuilder};
 
 const OVERLAY_WIDTH: f64 = 380.0;
 const OVERLAY_HEIGHT: f64 = 108.0;
@@ -32,8 +32,10 @@ pub fn install_overlay<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
 pub fn forward_event_to_overlay<R: Runtime>(handle: &tauri::AppHandle<R>, event: &vf_core::EngineEvent) {
     if let Some(overlay) = handle.get_webview_window("overlay") {
         position_overlay(&overlay);
+        if let Err(e) = overlay.emit("vox://event", event) {
+            tracing::warn!("overlay event emit failed: {e}");
+        }
     }
-    let _ = event;
 }
 
 fn position_overlay<R: Runtime>(overlay: &tauri::WebviewWindow<R>) {

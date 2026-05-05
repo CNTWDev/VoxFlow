@@ -406,7 +406,6 @@ fn build_backend(
             enable_timestamps,
             enable_speaker_diarization,
         }) => {
-            ensure_rest_batch(*transport)?;
             tracing::info!("building VoxNexus ASR backend for profile '{profile_id}' model '{model_id}'");
             let (raw_key, key_source) = api_key.as_deref()
                 .filter(|k| !k.is_empty())
@@ -420,12 +419,17 @@ fn build_backend(
                 )));
             }
             tracing::info!("using VoxNexus API key from {key_source}: {}", key_fingerprint(&key));
+            if !matches!(transport, AsrTransportKind::RestBatch | AsrTransportKind::WebSocketStreaming) {
+                return Err(VoxError::Other(anyhow::anyhow!(
+                    "VoxNexus supports rest_batch and web_socket_streaming transports"
+                )));
+            }
             Ok(Box::new(VoxNexusBackend::new(
                 key,
                 model_id.as_str(),
                 *enable_timestamps,
                 *enable_speaker_diarization,
-            )))
+            ).with_transport(to_asr_transport(*transport))))
         }
         Some(ProfileBackendConfig::Local { transport, .. }) => {
             if !matches!(transport, AsrTransportKind::LocalBatch) {
@@ -456,6 +460,15 @@ fn ensure_rest_batch(transport: AsrTransportKind) -> Result<(), VoxError> {
         Err(VoxError::Other(anyhow::anyhow!(
             "streaming transport is reserved for a later phase; switch this profile to rest_batch"
         )))
+    }
+}
+
+fn to_asr_transport(transport: AsrTransportKind) -> vf_asr::AsrTransportKind {
+    match transport {
+        AsrTransportKind::RestBatch => vf_asr::AsrTransportKind::RestBatch,
+        AsrTransportKind::WebSocketStreaming => vf_asr::AsrTransportKind::WebSocketStreaming,
+        AsrTransportKind::LocalBatch => vf_asr::AsrTransportKind::LocalBatch,
+        AsrTransportKind::LocalStreaming => vf_asr::AsrTransportKind::LocalStreaming,
     }
 }
 

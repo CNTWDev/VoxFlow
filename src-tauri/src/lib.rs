@@ -84,7 +84,7 @@ pub fn run() {
                                 }
                             }
                             overlay::forward_event_to_overlay(&handle, &event);
-                            if let Err(e) = handle.emit("vox://event", &event) {
+                            if let Err(e) = handle.emit_to("main", "vox://event", &event) {
                                 tracing::error!("tauri emit failed: {e}");
                             }
                         }

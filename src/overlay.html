@@ -191,6 +191,7 @@
   </div>
 
   <script>
+    const { invoke } = window.__TAURI__.core;
     const { listen } = window.__TAURI__.event;
     const pill = document.getElementById('pill');
     const title = document.getElementById('title');
@@ -226,18 +227,32 @@
       }, delay);
     }
 
+    function normalizeState(state) {
+      if (typeof state === 'string') return state;
+      return state?.state || 'Idle';
+    }
+
+    function handleState(state) {
+      if (state === 'Recording' || state === 'Processing' || state === 'Injecting') {
+        setOverlay(state);
+      } else if (state === 'Idle') {
+        if (Date.now() < stickyUntil) return;
+        hideSoon(350);
+      }
+    }
+
+    async function syncState() {
+      try {
+        handleState(normalizeState(await invoke('get_state')));
+      } catch (_) {}
+    }
+
     listen('vox://event', event => {
       const data = event.payload;
       if (!data || !data.type) return;
 
       if (data.type === 'StateChanged') {
-        const state = typeof data.state === 'string' ? data.state : data.state?.state;
-        if (state === 'Recording' || state === 'Processing' || state === 'Injecting') {
-          setOverlay(state);
-        } else if (state === 'Idle') {
-          if (Date.now() < stickyUntil) return;
-          hideSoon(350);
-        }
+        handleState(normalizeState(data.state));
       } else if (data.type === 'Transcription') {
         setOverlay('Success');
         hideSoon(1300);
@@ -246,6 +261,9 @@
         hideSoon(2600);
       }
     }).catch(console.error);
+
+    syncState();
+    setInterval(syncState, 700);
   </script>
 </body>
 </html>
