@@ -69,6 +69,18 @@ pub fn run() {
             overlay::install_overlay(app)?;
             permissions::emit_system_permissions(app.handle());
 
+            // Proactively request microphone access so the app registers with TCC and
+            // the system dialog appears immediately on first launch. For already-decided
+            // statuses (Authorized / Denied) this returns instantly with no dialog.
+            #[cfg(target_os = "macos")]
+            {
+                let handle_perm = app.handle().clone();
+                std::thread::spawn(move || {
+                    let _ = vf_audio::request_microphone_permission();
+                    permissions::emit_system_permissions(&handle_perm);
+                });
+            }
+
             // Forward engine events → Tauri frontend events
             tauri::async_runtime::spawn(async move {
                 loop {
@@ -84,6 +96,7 @@ pub fn run() {
                                 vf_core::EngineEvent::Error { message, .. } => {
                                     tracing::error!("emitting error: {message}");
                                 }
+                                vf_core::EngineEvent::AudioLevel { .. } => {}
                             }
                             overlay::forward_event_to_overlay(&handle, &event);
                             if let Err(e) = handle.emit_to("main", "vox://event", &event) {

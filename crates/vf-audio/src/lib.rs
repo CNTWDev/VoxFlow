@@ -2,7 +2,7 @@ pub mod capture;
 pub mod resampler;
 pub mod error;
 
-pub use capture::AudioCapture;
+pub use capture::{microphone_permission_granted, request_microphone_permission, AudioCapture};
 pub use resampler::AudioResampler;
 pub use error::AudioError;
 

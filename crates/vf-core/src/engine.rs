@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::LocalSet;
+use tokio::time::{timeout, Duration, Instant};
 use serde::{Deserialize, Serialize};
 use vf_config::{AppConfig, AsrTransportKind, ProfileBackendConfig};
 use vf_audio::{AudioCapture, AudioResampler, TARGET_SAMPLE_RATE};
@@ -9,14 +10,15 @@ use vf_inject::TextInjector;
 use crate::state::RecorderState;
 use crate::error::VoxError;
 
-const MIN_AUDIO_RMS: f32 = 0.0015;
-const MIN_AUDIO_PEAK: f32 = 0.01;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum EngineEvent {
     StateChanged {
         state: RecorderState,
+    },
+    AudioLevel {
+        rms: f32,
+        peak: f32,
     },
     Transcription {
         text: String,
@@ -28,6 +30,8 @@ pub enum EngineEvent {
         message: String,
     },
 }
+
+const POST_RECORDING_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn set_state(
     state_tx: &watch::Sender<RecorderState>,
@@ -63,7 +67,7 @@ impl VoxEngine {
         let (cmd_tx, cmd_rx) = mpsc::channel(64);
         let (state_tx, _) = watch::channel(RecorderState::Idle);
         let state_tx = Arc::new(state_tx);
-        let (event_tx, _) = broadcast::channel(16);
+        let (event_tx, _) = broadcast::channel(128);
 
         let state_clone = Arc::clone(&state_tx);
         let event_clone = event_tx.clone();
@@ -139,7 +143,7 @@ impl VoxEngine {
         let (cmd_tx, cmd_rx) = mpsc::channel(64);
         let (state_tx, _) = watch::channel(RecorderState::Idle);
         let state_tx = Arc::new(state_tx);
-        let (event_tx, _) = broadcast::channel(16);
+        let (event_tx, _) = broadcast::channel(128);
 
         let state_clone = Arc::clone(&state_tx);
         let event_clone = event_tx.clone();
@@ -200,7 +204,12 @@ async fn engine_loop(
                 let (tx, rx) = oneshot::channel::<()>();
                 stop_tx = Some(tx);
                 let max_secs = config.audio.max_recording_secs;
-                let handle = tokio::task::spawn_local(accumulate(capture, rx, max_secs));
+                let handle = tokio::task::spawn_local(accumulate(
+                    capture,
+                    rx,
+                    max_secs,
+                    event_tx.clone(),
+                ));
                 record_handle = Some(handle);
 
                 set_state(&state_tx, &event_tx, RecorderState::Recording);
@@ -221,7 +230,18 @@ async fn engine_loop(
                 set_state(&state_tx, &event_tx, RecorderState::Processing);
 
                 let samples = match record_handle.take() {
-                    Some(h) => h.await.unwrap_or_default(),
+                    Some(h) => match timeout(POST_RECORDING_TIMEOUT, h).await {
+                        Ok(joined) => joined.unwrap_or_default(),
+                        Err(_) => {
+                            tracing::error!("stopping audio capture timed out");
+                            let _ = event_tx.send(EngineEvent::Error {
+                                code: "recording_timeout".into(),
+                                message: "停止录音超时，请检查麦克风设备后重试".into(),
+                            });
+                            set_state(&state_tx, &event_tx, RecorderState::Idle);
+                            continue;
+                        }
+                    },
                     None => Vec::new(),
                 };
 
@@ -245,11 +265,11 @@ async fn engine_loop(
                     audio_level.rms,
                     audio_level.peak
                 );
-                if audio_level.rms < MIN_AUDIO_RMS && audio_level.peak < MIN_AUDIO_PEAK {
-                    tracing::warn!("audio level too low — skipping ASR");
+                if audio_level.peak == 0.0 {
+                    tracing::warn!("audio samples are all zero — skipping ASR");
                     let _ = event_tx.send(EngineEvent::Error {
-                        code: "silent_audio".into(),
-                        message: "没有检测到清晰语音，请检查麦克风权限或输入设备".into(),
+                        code: "no_audio_signal".into(),
+                        message: "没有录到麦克风声音，请检查麦克风权限或输入设备".into(),
                     });
                     set_state(&state_tx, &event_tx, RecorderState::Idle);
                     continue;
@@ -271,8 +291,13 @@ async fn engine_loop(
                 let profile_id = config.active_profile_id.clone();
                 let profile = config.active_profile().cloned();
 
-                match run_asr(samples, &profile_id, profile.as_ref(), &config, &mut cached_backend).await {
-                    Ok(result) => {
+                match timeout(
+                    POST_RECORDING_TIMEOUT,
+                    run_asr(samples, &profile_id, profile.as_ref(), &config, &mut cached_backend),
+                )
+                .await
+                {
+                    Ok(Ok(result)) => {
                         tracing::info!("transcription: {:?} ({}ms)", result.text, result.duration_ms);
 
                         if result.text.trim().is_empty() {
@@ -292,17 +317,19 @@ async fn engine_loop(
                         let post_paste_delay = config.inject.post_paste_delay_ms;
                         let restore = config.inject.restore_text_clipboard;
 
-                        let inject_result = tokio::task::spawn_blocking(move || {
+                        let inject_task = tokio::task::spawn_blocking(move || {
                             TextInjector::new(paste_delay, post_paste_delay, restore)
                                 .inject_sync(inject_text)
-                        }).await;
+                        });
+
+                        let inject_result = timeout(POST_RECORDING_TIMEOUT, inject_task).await;
 
                         let injected = match inject_result {
-                            Ok(Ok(())) => {
+                            Ok(Ok(Ok(()))) => {
                                 tracing::info!("text injected");
                                 true
                             }
-                            Ok(Err(e)) => {
+                            Ok(Ok(Err(e))) => {
                                 tracing::warn!("injection failed: {e}");
                                 let _ = event_tx.send(EngineEvent::Error {
                                     code: "inject".into(),
@@ -310,11 +337,19 @@ async fn engine_loop(
                                 });
                                 false
                             }
-                            Err(e) => {
+                            Ok(Err(e)) => {
                                 tracing::warn!("injection task panicked: {e}");
                                 let _ = event_tx.send(EngineEvent::Error {
                                     code: "inject".into(),
                                     message: "injection panicked".into(),
+                                });
+                                false
+                            }
+                            Err(_) => {
+                                tracing::error!("injection timed out");
+                                let _ = event_tx.send(EngineEvent::Error {
+                                    code: "inject_timeout".into(),
+                                    message: "输入文字超时，请检查当前应用是否允许粘贴".into(),
                                 });
                                 false
                             }
@@ -328,12 +363,19 @@ async fn engine_loop(
                             });
                         }
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         let msg = e.to_string();
                         tracing::error!("ASR failed: {msg}");
                         let _ = event_tx.send(EngineEvent::Error {
                             code: "asr".into(),
                             message: msg,
+                        });
+                    }
+                    Err(_) => {
+                        tracing::error!("ASR timed out");
+                        let _ = event_tx.send(EngineEvent::Error {
+                            code: "asr_timeout".into(),
+                            message: "语音识别超时，请检查网络或服务配置后重试".into(),
                         });
                     }
                 }
@@ -573,9 +615,15 @@ fn key_fingerprint(key: &str) -> String {
     format!("len={len}, suffix=...{suffix}")
 }
 
-async fn accumulate(mut capture: AudioCapture, stop: oneshot::Receiver<()>, max_secs: u32) -> Vec<f32> {
+async fn accumulate(
+    mut capture: AudioCapture,
+    stop: oneshot::Receiver<()>,
+    max_secs: u32,
+    event_tx: broadcast::Sender<EngineEvent>,
+) -> Vec<f32> {
     let native_rate = capture.native_rate;
     let mut buf: Vec<f32> = Vec::with_capacity(native_rate as usize * max_secs as usize);
+    let mut last_level_at = Instant::now() - Duration::from_millis(120);
 
     tokio::select! {
         _ = stop => {}
@@ -584,6 +632,14 @@ async fn accumulate(mut capture: AudioCapture, stop: oneshot::Receiver<()>, max_
         }
         _ = async {
             while let Some(chunk) = capture.rx.recv().await {
+                if last_level_at.elapsed() >= Duration::from_millis(50) {
+                    let level = audio_level(&chunk);
+                    let _ = event_tx.send(EngineEvent::AudioLevel {
+                        rms: level.rms,
+                        peak: level.peak,
+                    });
+                    last_level_at = Instant::now();
+                }
                 buf.extend_from_slice(&chunk);
             }
         } => {}
@@ -691,7 +747,7 @@ mod tests {
         match event {
             EngineEvent::Transcription { text, .. } => assert_eq!(text, "hello world"),
             EngineEvent::Error { message, .. } => panic!("unexpected error: {message}"),
-            EngineEvent::StateChanged { .. } => {}
+            EngineEvent::StateChanged { .. } | EngineEvent::AudioLevel { .. } => {}
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(engine.state(), RecorderState::Idle);

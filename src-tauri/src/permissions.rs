@@ -14,6 +14,12 @@ pub fn check_system_permissions() -> Vec<SystemPermissionStatus> {
     {
         vec![
             SystemPermissionStatus {
+                id: "microphone",
+                title: "麦克风",
+                description: "用于录制语音并进行语音识别。",
+                granted: vf_audio::microphone_permission_granted(),
+            },
+            SystemPermissionStatus {
                 id: "input_monitoring",
                 title: "输入监控",
                 description: "用于在任何应用中监听 Fn 长按，开始和结束录音。",
@@ -89,6 +95,10 @@ mod macos {
 
     pub fn open_system_permission_settings(permission: &str) -> Result<(), String> {
         let pane = match permission {
+            "microphone" => {
+                let _ = vf_audio::request_microphone_permission();
+                "Privacy_Microphone"
+            }
             "accessibility" => {
                 let _ = request_accessibility_prompt();
                 "Privacy_Accessibility"

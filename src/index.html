@@ -17,12 +17,14 @@
       --danger: #ff6b57;
       --blue: #72a8ff;
       --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+      --audio-level: 0;
     }
 
     * { box-sizing: border-box; }
     body {
       margin: 0;
       height: 100vh;
+      height: 100dvh;
       color: var(--text);
       font-family: ui-serif, Georgia, "Times New Roman", serif;
       background:
@@ -34,11 +36,12 @@
     }
 
     .shell {
-      width: min(1120px, 100%);
+      width: min(1360px, 100%);
       height: calc(100vh - 36px);
+      height: calc(100dvh - 36px);
       margin: 0 auto;
       display: grid;
-      grid-template-columns: minmax(360px, .88fr) minmax(420px, 1.12fr);
+      grid-template-columns: minmax(260px, .78fr) minmax(340px, .92fr) minmax(360px, 1fr);
       gap: 20px;
       min-height: 0;
     }
@@ -52,12 +55,12 @@
     }
 
     .hero {
-      padding: 24px;
+      padding: 18px;
       min-height: 0;
       height: 100%;
       display: flex;
       flex-direction: column;
-      justify-content: space-between;
+      gap: 12px;
       overflow: hidden;
       position: relative;
     }
@@ -72,6 +75,20 @@
       border-radius: 50%;
       opacity: .6;
       pointer-events: none;
+    }
+
+    .hero-copy {
+      min-height: 0;
+      overflow: auto;
+      padding-right: 4px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero.banner .subtitle,
+    .hero.banner .tagline,
+    .hero.banner .quick-row {
+      display: none;
     }
 
     .topbar {
@@ -93,16 +110,16 @@
     }
 
     .topbar .eyebrow {
-      width: 230px;
       line-height: 32px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      flex: 0 0 230px;
+      flex: 1 1 auto;
+      min-width: 0;
     }
 
     .brand-title {
-      margin: 10px 0 8px;
+      margin: 6px 0 6px;
       max-width: 600px;
       position: relative;
       z-index: 1;
@@ -110,21 +127,21 @@
 
     .brand-name {
       display: block;
-      font-size: clamp(52px, 7vw, 82px);
+      font-size: clamp(38px, 4.2vw, 60px);
       line-height: .82;
       letter-spacing: -0.08em;
     }
 
     .brand-position {
       display: inline-flex;
-      margin-top: 12px;
-      padding: 8px 12px;
+      margin-top: 8px;
+      padding: 7px 11px;
       border-radius: 999px;
       border: 1px solid rgba(242, 184, 75, .38);
       background: rgba(242, 184, 75, .1);
       color: var(--accent);
       font-family: ui-sans-serif, system-ui, sans-serif;
-      font-size: clamp(15px, 2vw, 20px);
+      font-size: clamp(13px, 1.6vw, 17px);
       font-weight: 800;
       letter-spacing: -0.03em;
     }
@@ -132,7 +149,7 @@
     .subtitle {
       color: var(--muted);
       font-family: ui-sans-serif, system-ui, sans-serif;
-      line-height: 1.6;
+      line-height: 1.45;
       max-width: 540px;
       position: relative;
       z-index: 1;
@@ -140,8 +157,8 @@
 
     .tagline {
       display: inline-flex;
-      margin-top: 12px;
-      padding: 8px 11px;
+      margin-top: 9px;
+      padding: 7px 10px;
       border: 1px solid var(--line);
       border-radius: 999px;
       color: var(--accent-2);
@@ -152,8 +169,47 @@
       z-index: 1;
     }
 
+    .guide-card {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(0, 0, 0, .22);
+      padding: 12px 14px;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      position: relative;
+      z-index: 1;
+    }
+
+    .guide-title {
+      margin: 0 0 8px;
+      font-size: 12px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--accent-2);
+      font-weight: 800;
+    }
+
+    .guide-steps {
+      margin: 0;
+      padding-left: 18px;
+      display: grid;
+      gap: 6px;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .guide-steps code {
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(246,239,224,.08);
+      color: var(--accent);
+    }
+
     .status-card {
-      margin-top: 22px;
+      margin-top: 0;
       border-radius: 22px;
       border: 1px solid var(--line);
       background: rgba(0,0,0,.22);
@@ -161,6 +217,8 @@
       font-family: ui-sans-serif, system-ui, sans-serif;
       position: relative;
       z-index: 1;
+      min-height: 0;
+      overflow: auto;
     }
 
     .status-row {
@@ -188,6 +246,9 @@
       height: 8px;
       border-radius: 50%;
       background: currentColor;
+      box-shadow: 0 0 0 calc(var(--audio-level) * 9px) color-mix(in srgb, currentColor 26%, transparent);
+      transform: scale(calc(1 + var(--audio-level) * .45));
+      transition: box-shadow 90ms linear, transform 90ms linear;
     }
 
     #status.Recording { color: var(--danger); }
@@ -209,11 +270,12 @@
     button:hover { transform: translateY(-1px); }
     button:disabled { opacity: .42; cursor: default; transform: none; }
     button.secondary { background: rgba(246,239,224,.12); color: var(--text); }
-    button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+    button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); white-space: nowrap; }
     button.danger { background: var(--danger); color: #250b06; }
 
     #result {
-      min-height: 88px;
+      min-height: clamp(96px, 20vh, 180px);
+      max-height: 32vh;
       white-space: pre-wrap;
       line-height: 1.55;
       color: var(--text);
@@ -222,6 +284,7 @@
       border-radius: 18px;
       padding: 16px;
       margin-top: 16px;
+      overflow: auto;
     }
     #result.empty { color: rgba(246,239,224,.42); font-style: italic; }
     #error-msg { color: var(--danger); min-height: 20px; margin-top: 12px; font-size: 13px; }
@@ -280,6 +343,18 @@
       gap: 16px;
       font-family: ui-sans-serif, system-ui, sans-serif;
       overflow: hidden;
+    }
+
+    .control-panel {
+      background:
+        radial-gradient(circle at 12% 0%, rgba(114, 168, 255, .16), transparent 34%),
+        var(--panel);
+      overflow: auto;
+    }
+
+    .control-panel .status-card {
+      flex: 1;
+      min-height: 0;
     }
 
     .panel-header {
@@ -352,7 +427,7 @@
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      margin-top: 14px;
+      margin-top: 10px;
       position: relative;
       z-index: 1;
       font-family: ui-sans-serif, system-ui, sans-serif;
@@ -362,6 +437,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
+      flex-shrink: 0;
     }
 
     .language-switch {
@@ -489,10 +565,69 @@
       font-size: 11px;
     }
 
+    @media (max-width: 1120px) {
+      .shell {
+        width: min(960px, 100%);
+        grid-template-columns: minmax(300px, .9fr) minmax(360px, 1.1fr);
+      }
+
+      .hero {
+        grid-column: 1 / -1;
+        height: auto;
+        min-height: 0;
+        padding: 12px 16px;
+        gap: 8px;
+      }
+
+      .hero-copy {
+        overflow: visible;
+      }
+
+      .topbar {
+        margin-bottom: 4px;
+      }
+
+      .brand-title {
+        margin: 2px 0 0;
+      }
+
+      .brand-name {
+        font-size: clamp(28px, 4.6vw, 42px);
+      }
+
+      .brand-position {
+        margin-top: 4px;
+        padding: 5px 9px;
+        font-size: clamp(12px, 1.8vw, 14px);
+      }
+
+      .subtitle,
+      .tagline,
+      .quick-row {
+        display: none;
+      }
+
+      .guide-card {
+        margin-top: 8px;
+        padding: 10px 12px;
+      }
+
+      .guide-steps {
+        font-size: 11px;
+        gap: 5px;
+      }
+
+      .control-panel .status-card {
+        min-height: 0;
+      }
+    }
+
     @media (max-width: 880px) {
       body { padding: 14px; overflow: auto; height: auto; }
       .shell { grid-template-columns: 1fr; height: auto; }
       .hero, .panel { min-height: auto; }
+      #result { max-height: none; }
+      .control-panel .status-card { min-height: auto; }
       .settings-grid { grid-template-columns: 1fr; }
       .provider-tabs { grid-template-columns: repeat(3, 1fr); }
       .grid { grid-template-columns: 1fr; }
@@ -501,8 +636,8 @@
 </head>
 <body>
   <main class="shell">
-    <section class="hero">
-      <div>
+    <section class="hero banner">
+      <div class="hero-copy">
         <div class="topbar">
           <div class="eyebrow" data-i18n="eyebrow">懂你的输入法</div>
           <div class="top-actions">
@@ -524,26 +659,38 @@
         <div class="quick-row">
           <div id="language-hint-label" class="note">Language: auto</div>
         </div>
-
-        <div class="status-card">
-          <div class="status-row">
-            <div id="status">Idle</div>
-            <div id="active-profile-label" class="note" data-i18n="loadingProfile">Loading profile…</div>
-          </div>
-          <div class="buttons">
-            <button id="btn-start" data-i18n="holdToSpeak">按住说话</button>
-            <button id="btn-stop" class="danger" disabled data-i18n="releaseToFinish">松开完成</button>
-            <button id="btn-cancel" class="secondary" disabled data-i18n="cancel">取消</button>
-          </div>
-          <div id="permission-card" class="permission-card"></div>
-          <div id="result" class="empty" data-i18n="resultEmpty">按住说话，松开后我会整理并输入。</div>
-          <div id="error-msg"></div>
-        </div>
+        <section class="guide-card" aria-label="Quick start">
+          <h3 class="guide-title" data-i18n="quickGuideTitle">快速开始</h3>
+          <ol class="guide-steps">
+            <li data-i18n="quickGuideStep1">先申请 API key：OpenAI 平台 / VoxNexus 控制台。</li>
+            <li data-i18n="quickGuideStep2">点击右上角“设置” → 选择 Provider → 粘贴 key 到 API key → 保存。</li>
+          </ol>
+        </section>
       </div>
 
-      <p class="note" data-i18n="languageNote">
-        默认跟随系统语言。需要切换时，直接点中文 / English。
-      </p>
+    </section>
+
+    <section class="panel control-panel">
+      <div class="panel-header">
+        <div>
+          <div class="eyebrow" data-i18n="activation">录音触发</div>
+          <h2 data-i18n="holdToSpeak">按住说话</h2>
+        </div>
+      </div>
+      <div class="status-card">
+        <div class="status-row">
+          <div id="status">Idle</div>
+          <div id="active-profile-label" class="note"></div>
+        </div>
+        <div class="buttons">
+          <button id="btn-start" data-i18n="holdToSpeak">按住说话</button>
+          <button id="btn-stop" class="danger" disabled data-i18n="releaseToFinish">松开完成</button>
+          <button id="btn-cancel" class="secondary" disabled data-i18n="cancel">取消</button>
+        </div>
+        <div id="permission-card" class="permission-card"></div>
+        <div id="result" class="empty" data-i18n="resultEmpty">按住说话，松开后我会整理并输入。</div>
+        <div id="error-msg"></div>
+      </div>
     </section>
 
     <section class="panel">
@@ -681,6 +828,7 @@
     const statusEl = $('status');
     const resultEl = $('result');
     const errorEl = $('error-msg');
+    let audioLevelDecayTimer = null;
 
     const providerTypeById = { openai: 'OpenAi', voxnexus: 'VoxNexus', local_whisper: 'Local' };
     const providerIdByType = { OpenAi: 'openai', VoxNexus: 'voxnexus', Local: 'local_whisper' };
@@ -692,6 +840,9 @@
         brandPosition: '可信赖的无痕隐私输入法',
         subtitle: '你只管自然地说，Vox Flow 会将口语整理成清楚、得体、可直接发送的文字，并输入到当前光标位置。',
         tagline: '你只管说，我来替你专业。',
+        quickGuideTitle: '快速开始',
+        quickGuideStep1: '先申请 API key：OpenAI 平台 / VoxNexus 控制台。',
+        quickGuideStep2: '点击右上角“设置” → 选择 Provider → 粘贴 key 到 API key → 保存。',
         holdToSpeak: '按住开始说话',
         releaseToFinish: '松开并转写',
         cancel: '取消',
@@ -716,8 +867,8 @@
         transport: '请求方式',
         timestamps: '时间戳',
         diarization: '区分说话人',
-        profile: '输入方案',
-        activeProfile: '当前输入方案',
+        profile: '配置',
+        activeProfile: '当前配置',
         displayName: '显示名称',
         languageHint: '识别语言提示',
         promptContext: '整理要求',
@@ -731,8 +882,7 @@
         transcribing: '正在识别并整理…',
         injecting: '正在输入到当前光标位置…',
         currentLanguage: '当前识别：{language}',
-        noActiveProfile: '尚未选择输入方案',
-        loadingProfile: '正在加载输入方案…',
+        noActiveProfile: '未配置',
         supports: '当前服务支持：{items}',
         capabilityPrompt: '整理要求',
         capabilityTimestamps: '时间戳',
@@ -740,6 +890,8 @@
         permissionRequired: '还需要开启系统权限',
         permissionAction: '去开启',
         permissionRefresh: '重新检查',
+        permissionMicrophoneTitle: '麦克风',
+        permissionMicrophoneDesc: '允许安装后的 Vox Flow 录制语音。若列表里显示的是开发路径，请移除旧项后重新打开安装包授权。',
         permissionAccessibilityTitle: '辅助功能',
         permissionAccessibilityDesc: '允许 Vox Flow 把整理后的文字输入到当前焦点应用。若已开启但仍提示，请关闭后重新开启，并重启 Vox Flow。',
         permissionInputMonitoringTitle: '输入监控',
@@ -753,6 +905,9 @@
         brandPosition: 'A trusted, private, invisible input method',
         subtitle: 'Speak naturally. Vox Flow turns your words into clear, polished text and inserts it right where your cursor is.',
         tagline: 'You speak. I make it professional.',
+        quickGuideTitle: 'Quick Start',
+        quickGuideStep1: 'Get an API key first from the OpenAI dashboard or VoxNexus console.',
+        quickGuideStep2: 'Open Settings at top-right -> choose Provider -> paste key into API key -> Save.',
         holdToSpeak: 'Hold to speak',
         releaseToFinish: 'Release to transcribe',
         cancel: 'Cancel',
@@ -777,8 +932,8 @@
         transport: 'Request mode',
         timestamps: 'Timestamps',
         diarization: 'Separate speakers',
-        profile: 'Input profile',
-        activeProfile: 'Current input profile',
+        profile: 'Profile',
+        activeProfile: 'Active profile',
         displayName: 'Display name',
         languageHint: 'Recognition language hint',
         promptContext: 'Writing guidance',
@@ -792,8 +947,7 @@
         transcribing: 'Recognizing and polishing…',
         injecting: 'Inserting at the current cursor…',
         currentLanguage: 'Recognition: {language}',
-        noActiveProfile: 'No input profile selected',
-        loadingProfile: 'Loading input profile…',
+        noActiveProfile: 'Not configured',
         supports: 'This service supports: {items}',
         capabilityPrompt: 'writing guidance',
         capabilityTimestamps: 'timestamps',
@@ -801,6 +955,8 @@
         permissionRequired: 'System permissions required',
         permissionAction: 'Open Settings',
         permissionRefresh: 'Check again',
+        permissionMicrophoneTitle: 'Microphone',
+        permissionMicrophoneDesc: 'Allows the installed Vox Flow app to record speech. If the list points to a development path, remove the old entry and authorize the installed app again.',
         permissionAccessibilityTitle: 'Accessibility',
         permissionAccessibilityDesc: 'Allows Vox Flow to insert polished text into the focused app. If it still appears missing, toggle it off and on, then restart Vox Flow.',
         permissionInputMonitoringTitle: 'Input Monitoring',
@@ -860,6 +1016,7 @@
 
     function updateUI(stateObj) {
       const state = normalizeState(stateObj);
+      if (state !== 'Recording') setAudioLevel(0, 0);
       statusEl.textContent = state;
       statusEl.className = state;
       $('btn-start').disabled = state !== 'Idle' && !pointerHoldRecording;
@@ -869,6 +1026,15 @@
         resultEl.textContent = state === 'Processing' ? t('transcribing') : t('injecting');
         resultEl.className = 'empty';
         errorEl.textContent = '';
+      }
+    }
+
+    function setAudioLevel(rms = 0, peak = 0) {
+      const level = Math.min(1, Math.max(0, Math.max(rms * 18, peak * 4)));
+      document.documentElement.style.setProperty('--audio-level', level.toFixed(3));
+      clearTimeout(audioLevelDecayTimer);
+      if (level > 0) {
+        audioLevelDecayTimer = setTimeout(() => setAudioLevel(0, 0), 180);
       }
     }
 
@@ -1112,6 +1278,12 @@
     }
 
     function permissionCopy(id) {
+      if (id === 'microphone') {
+        return {
+          title: t('permissionMicrophoneTitle'),
+          description: t('permissionMicrophoneDesc'),
+        };
+      }
       if (id === 'accessibility') {
         return {
           title: t('permissionAccessibilityTitle'),
@@ -1323,6 +1495,8 @@
         updateUI('Idle');
       } else if (data.type === 'StateChanged') {
         updateUI(data.state);
+      } else if (data.type === 'AudioLevel') {
+        setAudioLevel(data.rms, data.peak);
       }
     }).catch(console.error);
 

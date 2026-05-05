@@ -13,6 +13,12 @@
       --green: #61d394;
       --blue: #72a8ff;
       --red: #ff6b57;
+      --audio-level: 0;
+      --bar-1: 7px;
+      --bar-2: 9px;
+      --bar-3: 11px;
+      --bar-4: 9px;
+      --bar-5: 7px;
     }
 
     * { box-sizing: border-box; }
@@ -80,7 +86,9 @@
 
     .status-recording .orb {
       color: var(--red);
-      animation: breathe 1.15s ease-in-out infinite;
+      box-shadow: 0 0 0 calc(var(--audio-level) * 10px) rgba(255, 107, 87, .18);
+      transform: scale(calc(1 + var(--audio-level) * .12));
+      transition: box-shadow 90ms linear, transform 90ms linear;
     }
 
     .status-processing .orb { color: var(--blue); }
@@ -132,6 +140,19 @@
       transform-origin: bottom;
       animation: level 900ms ease-in-out infinite;
     }
+
+    .status-recording .bar {
+      animation: none;
+      background: var(--red);
+      opacity: calc(.36 + var(--audio-level) * .58);
+      transition: height 70ms linear, opacity 70ms linear;
+    }
+
+    .status-recording .bar:nth-child(1) { height: var(--bar-1); }
+    .status-recording .bar:nth-child(2) { height: var(--bar-2); }
+    .status-recording .bar:nth-child(3) { height: var(--bar-3); }
+    .status-recording .bar:nth-child(4) { height: var(--bar-4); }
+    .status-recording .bar:nth-child(5) { height: var(--bar-5); }
 
     .bar:nth-child(2) { animation-delay: 90ms; }
     .bar:nth-child(3) { animation-delay: 180ms; }
@@ -194,8 +215,10 @@
     const pill = document.getElementById('pill');
     const title = document.getElementById('title');
     const detail = document.getElementById('detail');
+    const bars = [...document.querySelectorAll('.bar')];
     let hideTimer = null;
     let stickyUntil = 0;
+    let levelDecayTimer = null;
 
     const copy = {
       Recording: ['正在聆听', '松开 Fn，我会整理并输入到当前光标位置'],
@@ -207,6 +230,7 @@
 
     function setOverlay(kind, message) {
       clearTimeout(hideTimer);
+      if (kind !== 'Recording') setAudioLevel(0, 0);
       if (kind === 'Success' || kind === 'Error') {
         stickyUntil = Date.now() + (kind === 'Success' ? 1200 : 2500);
       } else {
@@ -216,6 +240,23 @@
       pill.className = `pill visible status-${kind.toLowerCase()}`;
       title.textContent = main;
       detail.textContent = message || sub;
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function setAudioLevel(rms = 0, peak = 0) {
+      const level = clamp(Math.max(rms * 18, peak * 4), 0, 1);
+      const shape = [0.58, 0.82, 1, 0.74, 0.52];
+      document.documentElement.style.setProperty('--audio-level', level.toFixed(3));
+      bars.forEach((_, index) => {
+        const wobble = Math.sin(Date.now() / 95 + index * 1.7) * 2;
+        const height = 5 + level * 17 * shape[index] + wobble * level;
+        document.documentElement.style.setProperty(`--bar-${index + 1}`, `${clamp(height, 5, 22).toFixed(1)}px`);
+      });
+      clearTimeout(levelDecayTimer);
+      levelDecayTimer = setTimeout(() => setAudioLevel(0, 0), 180);
     }
 
     function hideSoon(delay = 1200) {
@@ -251,6 +292,8 @@
 
       if (data.type === 'StateChanged') {
         handleState(normalizeState(data.state));
+      } else if (data.type === 'AudioLevel') {
+        setAudioLevel(data.rms, data.peak);
       } else if (data.type === 'Transcription') {
         setOverlay('Success');
         hideSoon(1300);

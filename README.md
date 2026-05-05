@@ -38,10 +38,12 @@
 git clone <repo>
 cd vox-flow
 
-cargo tauri dev
+cargo tauri dev --config src-tauri/tauri.dev.conf.json
 ```
 
 窗口自动弹出。Rust 日志在终端，前端 console 在 WebKit Inspector（右键 → 检查元素）。
+
+> 开发模式使用独立的 bundle id（`com.voxflow.dev`），避免 macOS 麦克风 / 辅助功能 / 输入监控权限绑定到 dev 路径后影响安装包。
 
 ### 生产打包
 
@@ -181,6 +183,7 @@ RUST_LOG=debug cargo tauri dev
 
 ### macOS
 - 首次使用需授权**麦克风**（系统设置 → 隐私 → 麦克风）
+- 安装包 bundle id 为 `com.voxflow.app`；开发调试请使用上面的 dev 配置，避免权限绑定到 `target/debug` 或源码目录下的 `.app`
 - 文字注入需授权 **Accessibility**（系统设置 → 隐私 → 辅助功能）
 - 使用 `Fn` 长按热键还需授权 **Input Monitoring**（系统设置 → 隐私 → 输入监控）
 - 标准快捷键使用 `Option+Space`；若设为 `"Fn"`，则通过 `CGEventTap` 监听，与其他快捷键框架互不干扰
