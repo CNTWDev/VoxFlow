@@ -44,6 +44,7 @@ enum EngineCommand {
     GetConfig(oneshot::Sender<AppConfig>),
     SetConfig(AppConfig, oneshot::Sender<Result<(), VoxError>>),
     SetActiveProfile(String, oneshot::Sender<Result<(), VoxError>>),
+    Shutdown,
 }
 
 /// Handle to the VoxEngine background task — cheap to clone.
@@ -156,6 +157,14 @@ impl VoxEngine {
     }
 }
 
+impl Drop for VoxEngine {
+    fn drop(&mut self) {
+        // Best-effort: tell the engine loop to abort any in-progress recording and exit.
+        // If the channel is already closed (all senders gone), this silently fails.
+        let _ = self.cmd_tx.try_send(EngineCommand::Shutdown);
+    }
+}
+
 async fn engine_loop(
     mut config: AppConfig,
     mut cmd_rx: mpsc::Receiver<EngineCommand>,
@@ -223,10 +232,16 @@ async fn engine_loop(
                     continue;
                 }
 
-                // Phase 1 debug wav (keep for now)
-                let wav_path = std::env::temp_dir().join("vox_flow_debug.wav");
-                if let Err(e) = vf_audio::save_wav(&samples, TARGET_SAMPLE_RATE, &wav_path) {
-                    tracing::warn!("debug wav failed: {e}");
+                // Debug WAV — only in debug builds, written off the critical path
+                #[cfg(debug_assertions)]
+                {
+                    let wav_samples = samples.clone();
+                    let wav_path = std::env::temp_dir().join("vox_flow_debug.wav");
+                    tokio::task::spawn_blocking(move || {
+                        if let Err(e) = vf_audio::save_wav(&wav_samples, TARGET_SAMPLE_RATE, &wav_path) {
+                            tracing::warn!("debug wav failed: {e}");
+                        }
+                    });
                 }
 
                 // Run ASR
@@ -336,6 +351,17 @@ async fn engine_loop(
                 }
                 let result = config.save().map_err(VoxError::Other);
                 let _ = reply.send(result);
+            }
+
+            EngineCommand::Shutdown => {
+                tracing::info!("engine shutdown requested");
+                if let Some(tx) = stop_tx.take() {
+                    let _ = tx.send(());
+                }
+                if let Some(h) = record_handle.take() {
+                    h.abort();
+                }
+                return;
             }
         }
     }

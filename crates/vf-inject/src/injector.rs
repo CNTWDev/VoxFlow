@@ -44,9 +44,13 @@ impl TextInjector {
         // Wait for target app to read
         std::thread::sleep(Duration::from_millis(self.post_paste_delay_ms));
 
-        // Restore previous clipboard text (best-effort)
+        // Restore previous clipboard text only if the clipboard still contains our
+        // transcription — if the user copied something else during injection, don't clobber it.
         if let Some(prev) = saved {
-            let _ = clipboard.set_text(prev);
+            let current = clipboard.get_text().unwrap_or_default();
+            if current.trim() == text.trim() {
+                let _ = clipboard.set_text(prev);
+            }
         }
 
         Ok(())

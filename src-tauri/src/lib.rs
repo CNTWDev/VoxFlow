@@ -1,3 +1,7 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tauri::{AppHandle, Emitter, Runtime};
 use vf_config::{ActivationMode, AppConfig};
 use vf_core::VoxEngine;
@@ -16,7 +20,9 @@ pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,vf_core=debug,vf_audio=debug"))
+                .unwrap_or_else(|_| {
+                    tracing_subscriber::EnvFilter::new("info,vf_core=debug,vf_audio=debug")
+                }),
         )
         .init();
 
@@ -26,6 +32,11 @@ pub fn run() {
 
     // Subscribe to engine events BEFORE building the Tauri app so we don't miss any.
     let mut event_rx = engine.subscribe_events();
+
+    // Stop flag shared between the Fn-hotkey thread and the window-close handler.
+    let hotkey_stop: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    let hotkey_stop_handler = Arc::clone(&hotkey_stop);
+    let hotkey_stop_setup = Arc::clone(&hotkey_stop);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -42,6 +53,14 @@ pub fn run() {
             commands::check_system_permissions,
             commands::open_system_permission_settings,
         ])
+        // Signal the Fn-hotkey thread to exit when the main window is destroyed.
+        .on_window_event(move |window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::Destroyed = event {
+                    hotkey_stop_handler.store(true, Ordering::Relaxed);
+                }
+            }
+        })
         .setup(move |app| {
             let handle = app.handle().clone();
             let hotkey = initial_hotkey.clone();
@@ -63,7 +82,7 @@ pub fn run() {
                 }
             };
             app.handle().plugin(shortcut_plugin)?;
-            platform_hotkey::install_platform_hotkeys(app.handle().clone());
+            platform_hotkey::install_platform_hotkeys(app.handle().clone(), hotkey_stop_setup);
             overlay::install_overlay(app)?;
             permissions::emit_system_permissions(app.handle());
 

@@ -57,5 +57,9 @@ pub async fn check_system_permissions() -> Result<Vec<permissions::SystemPermiss
 
 #[tauri::command]
 pub async fn open_system_permission_settings(permission: String) -> Result<(), String> {
-    permissions::open_system_permission_settings(&permission)
+    tokio::task::spawn_blocking(move || {
+        permissions::open_system_permission_settings(&permission)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

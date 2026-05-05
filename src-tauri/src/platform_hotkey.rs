@@ -1,3 +1,7 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::AppState;
@@ -8,26 +12,22 @@ enum PlatformHotkeyEvent {
     Released,
 }
 
-pub fn install_platform_hotkeys<R: Runtime>(app: AppHandle<R>) {
+pub fn install_platform_hotkeys<R: Runtime>(app: AppHandle<R>, stop: Arc<AtomicBool>) {
     #[cfg(target_os = "macos")]
-    install_macos_fn_hotkey(app);
+    install_macos_fn_hotkey(app, stop);
 
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = app;
+        let _ = (app, stop);
     }
 }
 
 #[cfg(target_os = "macos")]
-fn install_macos_fn_hotkey<R: Runtime>(app: AppHandle<R>) {
-    use core_foundation::runloop::CFRunLoop;
+fn install_macos_fn_hotkey<R: Runtime>(app: AppHandle<R>, stop: Arc<AtomicBool>) {
+    use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
     use core_graphics::event::{
         CallbackResult, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
         CGEventTapPlacement, CGEventType, EventField,
-    };
-    use std::sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
     };
 
     const MAC_FN_KEYCODE: i64 = 63;
@@ -80,7 +80,8 @@ fn install_macos_fn_hotkey<R: Runtime>(app: AppHandle<R>) {
                         return CallbackResult::Keep;
                     }
 
-                    let fn_is_down = event.get_flags().contains(CGEventFlags::CGEventFlagSecondaryFn);
+                    let fn_is_down =
+                        event.get_flags().contains(CGEventFlags::CGEventFlagSecondaryFn);
                     let was_down = callback_pressed.swap(fn_is_down, Ordering::SeqCst);
                     match (was_down, fn_is_down) {
                         (false, true) => {
@@ -98,7 +99,7 @@ fn install_macos_fn_hotkey<R: Runtime>(app: AppHandle<R>) {
 
             let Ok(event_tap) = tap else {
                 tracing::warn!(
-                    "macOS Fn event tap could not be installed; grant Input Monitoring permission or use another global hotkey"
+                    "macOS Fn event tap could not be installed; grant Input Monitoring permission"
                 );
                 return;
             };
@@ -109,13 +110,24 @@ fn install_macos_fn_hotkey<R: Runtime>(app: AppHandle<R>) {
             };
 
             let run_loop = CFRunLoop::get_current();
-            run_loop.add_source(
-                &loop_source,
-                unsafe { core_foundation::runloop::kCFRunLoopCommonModes },
-            );
+            run_loop.add_source(&loop_source, unsafe { kCFRunLoopCommonModes });
             event_tap.enable();
             tracing::info!("macOS Fn hold hotkey listener installed");
-            CFRunLoop::run_current();
+
+            // Run in 200 ms bursts so the stop flag is checked promptly on app exit.
+            // This replaces CFRunLoop::run_current() which blocks indefinitely.
+            while !stop.load(Ordering::Relaxed) {
+                CFRunLoop::run_in_mode(
+                    unsafe { kCFRunLoopCommonModes },
+                    std::time::Duration::from_millis(200),
+                    false,
+                );
+            }
+
+            // Dropping event_tap and loop_source here releases the CGEventTap.
+            drop(loop_source);
+            drop(event_tap);
+            tracing::info!("macOS Fn hotkey listener stopped");
         })
         .map(|_| ())
         .unwrap_or_else(|e| tracing::warn!("failed to spawn macOS Fn hotkey listener: {e}"));

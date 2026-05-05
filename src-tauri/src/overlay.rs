@@ -31,7 +31,6 @@ pub fn install_overlay<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
 
 pub fn forward_event_to_overlay<R: Runtime>(handle: &tauri::AppHandle<R>, event: &vf_core::EngineEvent) {
     if let Some(overlay) = handle.get_webview_window("overlay") {
-        position_overlay(&overlay);
         if let Err(e) = overlay.emit("vox://event", event) {
             tracing::warn!("overlay event emit failed: {e}");
         }

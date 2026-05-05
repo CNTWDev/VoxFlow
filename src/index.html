@@ -1330,15 +1330,11 @@
       renderPermissions(event.payload || []);
     }).catch(console.error);
 
-    setInterval(async () => {
-      try { updateUI(await invoke('get_state')); } catch (_) {}
-    }, 1200);
-
     uiLanguage = resolveUiLanguage();
     applyI18n();
     loadHistory();
     load().catch(e => { errorEl.textContent = String(e); });
     checkPermissions();
-  </script>
+</script>
 </body>
 </html>
