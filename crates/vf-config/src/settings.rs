@@ -45,8 +45,8 @@ pub struct InjectConfig {
     pub restore_text_clipboard: bool,
 }
 
-fn default_paste_delay_ms() -> u64 { 50 }
-fn default_post_paste_delay_ms() -> u64 { 150 }
+fn default_paste_delay_ms() -> u64 { 80 }
+fn default_post_paste_delay_ms() -> u64 { 450 }
 fn default_true() -> bool { true }
 
 impl Default for InjectConfig {
@@ -236,10 +236,10 @@ impl AppConfig {
         if self.audio.trailing_silence_ms == 0 {
             self.audio.trailing_silence_ms = default_trailing_silence_ms();
         }
-        if self.inject.paste_delay_ms == 0 {
+        if self.inject.paste_delay_ms < default_paste_delay_ms() {
             self.inject.paste_delay_ms = default_paste_delay_ms();
         }
-        if self.inject.post_paste_delay_ms == 0 {
+        if self.inject.post_paste_delay_ms < default_post_paste_delay_ms() {
             self.inject.post_paste_delay_ms = default_post_paste_delay_ms();
         }
         self.normalize_platform_hotkey();

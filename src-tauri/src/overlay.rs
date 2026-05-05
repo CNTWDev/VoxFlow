@@ -1,7 +1,7 @@
 use tauri::{Emitter, Manager, PhysicalPosition, Runtime, WebviewUrl, WebviewWindowBuilder};
 
-const OVERLAY_WIDTH: f64 = 380.0;
-const OVERLAY_HEIGHT: f64 = 108.0;
+const OVERLAY_WIDTH: f64 = 278.0;
+const OVERLAY_HEIGHT: f64 = 58.0;
 const OVERLAY_BOTTOM_MARGIN: i32 = 96;
 
 pub fn install_overlay<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
@@ -18,6 +18,7 @@ pub fn install_overlay<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     .always_on_top(true)
     .skip_taskbar(true)
     .focusable(false)
+    .shadow(false)
     .visible(true)
     .build()?;
 

@@ -19,6 +19,10 @@ impl TextInjector {
     pub fn inject_sync(&self, text: String) -> Result<(), InjectError> {
         use arboard::Clipboard;
 
+        if text.trim().is_empty() {
+            return Err(InjectError::EmptyText);
+        }
+
         let mut clipboard = Clipboard::new()
             .map_err(|e| InjectError::Clipboard(e.to_string()))?;
 
@@ -91,5 +95,19 @@ impl TextInjector {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_text_is_rejected_before_clipboard_access() {
+        let injector = TextInjector::new(0, 0, true);
+        assert!(matches!(
+            injector.inject_sync("  \n\t  ".to_string()),
+            Err(InjectError::EmptyText)
+        ));
     }
 }

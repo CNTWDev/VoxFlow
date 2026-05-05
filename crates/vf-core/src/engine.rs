@@ -9,6 +9,9 @@ use vf_inject::TextInjector;
 use crate::state::RecorderState;
 use crate::error::VoxError;
 
+const MIN_AUDIO_RMS: f32 = 0.0015;
+const MIN_AUDIO_PEAK: f32 = 0.01;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum EngineEvent {
@@ -228,6 +231,26 @@ async fn engine_loop(
 
                 if samples.is_empty() {
                     tracing::warn!("no audio captured — skipping ASR");
+                    let _ = event_tx.send(EngineEvent::Error {
+                        code: "no_audio".into(),
+                        message: "没有录到麦克风声音，请检查麦克风权限或输入设备".into(),
+                    });
+                    set_state(&state_tx, &event_tx, RecorderState::Idle);
+                    continue;
+                }
+
+                let audio_level = audio_level(&samples);
+                tracing::info!(
+                    "recording level: rms={:.6}, peak={:.6}",
+                    audio_level.rms,
+                    audio_level.peak
+                );
+                if audio_level.rms < MIN_AUDIO_RMS && audio_level.peak < MIN_AUDIO_PEAK {
+                    tracing::warn!("audio level too low — skipping ASR");
+                    let _ = event_tx.send(EngineEvent::Error {
+                        code: "silent_audio".into(),
+                        message: "没有检测到清晰语音，请检查麦克风权限或输入设备".into(),
+                    });
                     set_state(&state_tx, &event_tx, RecorderState::Idle);
                     continue;
                 }
@@ -251,6 +274,16 @@ async fn engine_loop(
                 match run_asr(samples, &profile_id, profile.as_ref(), &config, &mut cached_backend).await {
                     Ok(result) => {
                         tracing::info!("transcription: {:?} ({}ms)", result.text, result.duration_ms);
+
+                        if result.text.trim().is_empty() {
+                            tracing::warn!("transcription was empty — skipping injection");
+                            let _ = event_tx.send(EngineEvent::Error {
+                                code: "empty_transcription".into(),
+                                message: "识别结果为空，请再说一遍或检查识别语言设置".into(),
+                            });
+                            set_state(&state_tx, &event_tx, RecorderState::Idle);
+                            continue;
+                        }
 
                         set_state(&state_tx, &event_tx, RecorderState::Injecting);
 
@@ -364,6 +397,31 @@ async fn engine_loop(
                 return;
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AudioLevel {
+    rms: f32,
+    peak: f32,
+}
+
+fn audio_level(samples: &[f32]) -> AudioLevel {
+    if samples.is_empty() {
+        return AudioLevel { rms: 0.0, peak: 0.0 };
+    }
+
+    let mut sum_squares = 0.0f64;
+    let mut peak = 0.0f32;
+    for sample in samples {
+        let amplitude = sample.abs();
+        peak = peak.max(amplitude);
+        sum_squares += (*sample as f64) * (*sample as f64);
+    }
+
+    AudioLevel {
+        rms: (sum_squares / samples.len() as f64).sqrt() as f32,
+        peak,
     }
 }
 
