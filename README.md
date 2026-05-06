@@ -48,17 +48,31 @@ cargo tauri dev --config src-tauri/tauri.dev.conf.json
 ### 生产打包
 
 ```bash
-cargo tauri build
+export APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+./scripts/build-macos-release.sh
 ```
 
 产物在 `src-tauri/target/release/bundle/`：
 - macOS：`Vox Flow.app` + `.dmg`
 - Windows：`.msi` + NSIS 安装包
 
-> 当前版本（Phase 5）未签名。macOS 首次打开若被 Gatekeeper 拦截，在**系统设置 → 隐私与安全性**手动允许，或执行：
-> ```bash
-> xattr -cr "Vox Flow.app"
-> ```
+若你还没有签名证书，先检查：
+
+```bash
+security find-identity -v -p codesigning
+```
+
+看到 `0 valid identities found` 表示还不能做稳定签名发布，需要先在钥匙串安装可用的 `Developer ID Application` 证书。
+
+### 固定签名（避免每次升级重授权）
+
+为避免 macOS 在每次升级后重复要求麦克风 / 辅助功能 / 输入监控授权，请保持以下三点稳定：
+
+- 固定 `bundle identifier`（当前为 `com.voxflow.desktop`）
+- 固定签名证书（每次发布都使用同一个 `APPLE_SIGNING_IDENTITY`）
+- 固定安装路径（始终覆盖 `/Applications/Vox Flow.app`）
+
+> `tauri dev` 使用独立 id（`com.voxflow.dev`），权限与生产包天然隔离，属于预期行为。
 
 ---
 
@@ -183,7 +197,7 @@ RUST_LOG=debug cargo tauri dev
 
 ### macOS
 - 首次使用需授权**麦克风**（系统设置 → 隐私 → 麦克风）
-- 安装包 bundle id 为 `com.voxflow.app`；开发调试请使用上面的 dev 配置，避免权限绑定到 `target/debug` 或源码目录下的 `.app`
+- 生产包 bundle id 为 `com.voxflow.desktop`；开发调试使用 `com.voxflow.dev`（见 dev 配置）
 - 文字注入需授权 **Accessibility**（系统设置 → 隐私 → 辅助功能）
 - 使用 `Fn` 长按热键还需授权 **Input Monitoring**（系统设置 → 隐私 → 输入监控）
 - 标准快捷键使用 `Option+Space`；若设为 `"Fn"`，则通过 `CGEventTap` 监听，与其他快捷键框架互不干扰
