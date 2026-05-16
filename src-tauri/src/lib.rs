@@ -93,9 +93,6 @@ pub fn run() {
                                 vf_core::EngineEvent::Transcription { text, .. } => {
                                     tracing::info!("emitting transcription: {text:?}");
                                 }
-                                vf_core::EngineEvent::TranscriptionUpdate { text, .. } => {
-                                    tracing::debug!("emitting transcription update: {text:?}");
-                                }
                                 vf_core::EngineEvent::Error { message, .. } => {
                                     tracing::error!("emitting error: {message}");
                                 }

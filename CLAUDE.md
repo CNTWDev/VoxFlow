@@ -30,10 +30,9 @@ No Node.js is required — the frontend is plain HTML served by WebKit.
 
 ## Architecture
 
-Cargo workspace with six library crates plus the Tauri shell. Dependency order:
+Cargo workspace with five library crates plus the Tauri shell. Dependency order:
 
 ```
-vf-agent-os    (standalone Agent OS prompt/memory/skill utilities)
 vf-config  ←  vf-core  →  vf-asr
                 ↑               ↑
            vf-audio        vf-inject
@@ -41,13 +40,11 @@ vf-config  ←  vf-core  →  vf-asr
            src-tauri (Tauri shell + frontend HTML + overlay + hotkeys + permissions)
 ```
 
-None of the `vf-*` crates depend on Tauri; they compile and test independently. `vf-agent-os` is currently standalone infrastructure and is not wired into the voice input runtime.
+None of the `vf-*` crates depend on Tauri; they compile and test independently.
 
 ### Data flow
 
-1. **vf-agent-os** (`crates/vf-agent-os/`) — lightweight Agent OS utilities inspired by Hermes Agent. It compiles layered prompts into `cached_system` + `ephemeral_context`, reads frozen `MEMORY.md` / `USER.md` snapshots, indexes `skills/*/SKILL.md`, loads project context files, and writes simple JSONL session logs. Storage stays filesystem-based under `.agent-os/`.
-
-2. **vf-audio** (`crates/vf-audio/`) — captures raw PCM from the default microphone via `cpal`, resamples to 16 kHz mono f32 using `rubato`. Resampling is done after accumulation (not per-chunk) to avoid zero-padding artefacts.
+1. **vf-audio** (`crates/vf-audio/`) — captures raw PCM from the default microphone via `cpal`, resamples to 16 kHz mono f32 using `rubato`. Resampling is done after accumulation (not per-chunk) to avoid zero-padding artefacts.
 
 2. **vf-asr** (`crates/vf-asr/`) — defines the `AsrBackend` trait (`prepare` / `transcribe` / optional `start_stream`). Three concrete backends:
    - `CloudBackend` / `OpenAiBackend` — OpenAI Transcription API (`gpt-4o-transcribe`, etc.)

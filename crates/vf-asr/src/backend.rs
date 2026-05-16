@@ -21,7 +21,6 @@ pub struct AsrCapabilities {
     pub timestamps: bool,
     pub speaker_diarization: bool,
     pub model_selection: bool,
-    pub llm_transform: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,7 +65,6 @@ pub enum StreamEvent {
     Ready { request_id: Option<String> },
     Partial { text: String },
     Final { result: TranscribeResult },
-    FlushDone { result: TranscribeResult },
     Error { message: String },
 }
 
@@ -110,7 +108,6 @@ pub fn provider_descriptors() -> Vec<AsrProviderDescriptor> {
                 timestamps: false,
                 speaker_diarization: false,
                 model_selection: true,
-                llm_transform: false,
             },
         },
         AsrProviderDescriptor {
@@ -122,11 +119,10 @@ pub fn provider_descriptors() -> Vec<AsrProviderDescriptor> {
                 streaming: true,
                 language_hint: true,
                 auto_language_detection: true,
-                prompt: true,
+                prompt: false,
                 timestamps: true,
                 speaker_diarization: true,
                 model_selection: true,
-                llm_transform: true,
             },
         },
         AsrProviderDescriptor {
@@ -142,7 +138,6 @@ pub fn provider_descriptors() -> Vec<AsrProviderDescriptor> {
                 timestamps: false,
                 speaker_diarization: false,
                 model_selection: true,
-                llm_transform: false,
             },
         },
     ]
