@@ -1,11 +1,17 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::LocalSet;
 use tokio::time::{timeout, Duration, Instant};
 use serde::{Deserialize, Serialize};
-use vf_config::{AppConfig, AsrTransportKind, ProfileBackendConfig};
+use vf_config::{AppConfig, AsrTransportKind, LanguageProfile, ProfileBackendConfig};
 use vf_audio::{AudioCapture, AudioResampler, TARGET_SAMPLE_RATE};
-use vf_asr::{AsrBackend, OpenAiBackend, TranscribeRequest, VoxNexusBackend};
+use vf_asr::{
+    AsrBackend, AudioChunk, OpenAiBackend, StreamEvent, StreamTranscribeRequest,
+    TranscribeRequest, TranscribeResult, VoxNexusBackend,
+};
 use vf_inject::TextInjector;
 use crate::state::RecorderState;
 use crate::error::VoxError;
@@ -21,9 +27,18 @@ pub enum EngineEvent {
         peak: f32,
     },
     Transcription {
+        request_id: String,
         text: String,
         duration_ms: u64,
+        metrics: TranscriptionMetrics,
         profile_id: String,
+    },
+    TranscriptionUpdate {
+        request_id: String,
+        text: String,
+        is_final: bool,
+        source: String,
+        revision: u64,
     },
     Error {
         code: String,
@@ -31,7 +46,24 @@ pub enum EngineEvent {
     },
 }
 
-const POST_RECORDING_TIMEOUT: Duration = Duration::from_secs(5);
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptionMetrics {
+    pub audio_duration_ms: u64,
+    pub stop_capture_ms: u64,
+    pub asr_ms: u64,
+    pub inject_ms: u64,
+    pub total_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ws_connect_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_partial_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_llm_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flush_wait_ms: Option<u64>,
+}
+
+const POST_RECORDING_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn set_state(
     state_tx: &watch::Sender<RecorderState>,
@@ -181,7 +213,11 @@ async fn engine_loop(
 ) {
     let mut stop_tx: Option<oneshot::Sender<()>> = None;
     let mut record_handle: Option<tokio::task::JoinHandle<Vec<f32>>> = None;
+    let mut stream_stop_tx: Option<oneshot::Sender<()>> = None;
+    let mut stream_handle: Option<tokio::task::JoinHandle<Result<StreamingRunResult, VoxError>>> = None;
     let mut cached_backend: Option<(String, Box<dyn AsrBackend>)> = init_backend;
+    let mut recording_seq: u64 = 0;
+    let mut recording_id: Option<String> = None;
 
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
@@ -191,9 +227,13 @@ async fn engine_loop(
                     continue;
                 }
 
+                recording_seq = recording_seq.saturating_add(1);
+                recording_id = Some(new_recording_id(recording_seq));
+
                 let capture = match AudioCapture::start() {
                     Ok(c) => c,
                     Err(e) => {
+                        recording_id = None;
                         let msg = e.to_string();
                         tracing::error!("audio capture failed: {msg}");
                         let _ = event_tx.send(EngineEvent::Error { code: "audio".into(), message: msg });
@@ -202,21 +242,44 @@ async fn engine_loop(
                 };
 
                 let (tx, rx) = oneshot::channel::<()>();
-                stop_tx = Some(tx);
                 let max_secs = config.audio.max_recording_secs;
-                let handle = tokio::task::spawn_local(accumulate(
-                    capture,
-                    rx,
-                    max_secs,
-                    event_tx.clone(),
-                ));
-                record_handle = Some(handle);
+                let profile_id = config.active_profile_id.clone();
+                let profile = config.active_profile().cloned();
+                let request_id = recording_id.clone().unwrap_or_else(|| new_recording_id(recording_seq));
+                if is_voxnexus_websocket_profile(profile.as_ref()) {
+                    stream_stop_tx = Some(tx);
+                    let event_tx = event_tx.clone();
+                    let config_snapshot = config.clone();
+                    let handle = tokio::task::spawn_local(async move {
+                        run_streaming_recording(
+                            capture,
+                            rx,
+                            max_secs,
+                            profile_id,
+                            profile,
+                            config_snapshot,
+                            request_id,
+                            event_tx,
+                        ).await
+                    });
+                    stream_handle = Some(handle);
+                } else {
+                    stop_tx = Some(tx);
+                    let handle = tokio::task::spawn_local(accumulate(
+                        capture,
+                        rx,
+                        max_secs,
+                        event_tx.clone(),
+                    ));
+                    record_handle = Some(handle);
+                }
 
                 set_state(&state_tx, &event_tx, RecorderState::Recording);
                 tracing::info!("recording started");
             }
 
             EngineCommand::StopRecording => {
+                let stop_started = Instant::now();
                 tracing::info!("stop recording requested");
                 if !matches!(*state_tx.borrow(), RecorderState::Recording) {
                     tracing::warn!("StopRecording ignored — not Recording");
@@ -226,8 +289,55 @@ async fn engine_loop(
                 if let Some(tx) = stop_tx.take() {
                     let _ = tx.send(());
                 }
+                if let Some(tx) = stream_stop_tx.take() {
+                    let _ = tx.send(());
+                }
 
                 set_state(&state_tx, &event_tx, RecorderState::Processing);
+
+                if let Some(handle) = stream_handle.take() {
+                    let profile_id = config.active_profile_id.clone();
+                    let request_id = recording_id
+                        .take()
+                        .unwrap_or_else(|| new_recording_id(recording_seq));
+                    match timeout(POST_RECORDING_TIMEOUT + Duration::from_secs(30), handle).await {
+                        Ok(Ok(Ok(stream_result))) => {
+                            handle_successful_transcription(
+                                stream_result.result,
+                                stream_result.metrics,
+                                request_id,
+                                profile_id,
+                                &config,
+                                &event_tx,
+                                &state_tx,
+                            ).await;
+                        }
+                        Ok(Ok(Err(e))) => {
+                            let msg = e.to_string();
+                            tracing::error!("streaming ASR failed: {msg}");
+                            let _ = event_tx.send(EngineEvent::Error {
+                                code: "asr".into(),
+                                message: msg,
+                            });
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!("streaming task panicked: {e}");
+                            let _ = event_tx.send(EngineEvent::Error {
+                                code: "asr".into(),
+                                message: "streaming transcription panicked".into(),
+                            });
+                        }
+                        Err(_) => {
+                            tracing::error!("streaming ASR timed out");
+                            let _ = event_tx.send(EngineEvent::Error {
+                                code: "asr_timeout".into(),
+                                message: "语音识别超时，请检查网络或服务配置后重试".into(),
+                            });
+                        }
+                    }
+                    set_state(&state_tx, &event_tx, RecorderState::Idle);
+                    continue;
+                }
 
                 let samples = match record_handle.take() {
                     Some(h) => match timeout(POST_RECORDING_TIMEOUT, h).await {
@@ -244,6 +354,9 @@ async fn engine_loop(
                     },
                     None => Vec::new(),
                 };
+                let stop_capture_ms = stop_started.elapsed().as_millis() as u64;
+                let audio_duration_ms =
+                    ((samples.len() as u64).saturating_mul(1000)) / TARGET_SAMPLE_RATE as u64;
 
                 tracing::info!("recording stopped: {} samples ({:.1}s)",
                     samples.len(),
@@ -290,6 +403,10 @@ async fn engine_loop(
                 // Run ASR
                 let profile_id = config.active_profile_id.clone();
                 let profile = config.active_profile().cloned();
+                let request_id = recording_id
+                    .take()
+                    .unwrap_or_else(|| new_recording_id(recording_seq));
+                let asr_started = Instant::now();
 
                 match timeout(
                     POST_RECORDING_TIMEOUT,
@@ -298,6 +415,7 @@ async fn engine_loop(
                 .await
                 {
                     Ok(Ok(result)) => {
+                        let asr_ms = asr_started.elapsed().as_millis() as u64;
                         tracing::info!("transcription: {:?} ({}ms)", result.text, result.duration_ms);
 
                         if result.text.trim().is_empty() {
@@ -312,6 +430,7 @@ async fn engine_loop(
 
                         set_state(&state_tx, &event_tx, RecorderState::Injecting);
 
+                        let inject_started = Instant::now();
                         let inject_text = result.text.clone();
                         let paste_delay = config.inject.paste_delay_ms;
                         let post_paste_delay = config.inject.post_paste_delay_ms;
@@ -354,11 +473,25 @@ async fn engine_loop(
                                 false
                             }
                         };
+                        let inject_ms = inject_started.elapsed().as_millis() as u64;
+                        let metrics = TranscriptionMetrics {
+                            audio_duration_ms,
+                            stop_capture_ms,
+                            asr_ms,
+                            inject_ms,
+                            total_ms: stop_started.elapsed().as_millis() as u64,
+                            ws_connect_ms: None,
+                            first_partial_ms: None,
+                            first_llm_ms: None,
+                            flush_wait_ms: None,
+                        };
 
                         if injected {
                             let _ = event_tx.send(EngineEvent::Transcription {
+                                request_id,
                                 text: result.text,
                                 duration_ms: result.duration_ms,
+                                metrics,
                                 profile_id: profile_id.clone(),
                             });
                         }
@@ -385,10 +518,17 @@ async fn engine_loop(
 
             EngineCommand::Cancel => {
                 tracing::info!("cancel recording requested");
+                recording_id = None;
                 if let Some(tx) = stop_tx.take() {
                     let _ = tx.send(());
                 }
+                if let Some(tx) = stream_stop_tx.take() {
+                    let _ = tx.send(());
+                }
                 if let Some(h) = record_handle.take() {
+                    h.abort();
+                }
+                if let Some(h) = stream_handle.take() {
                     h.abort();
                 }
                 set_state(&state_tx, &event_tx, RecorderState::Idle);
@@ -433,12 +573,110 @@ async fn engine_loop(
                 if let Some(tx) = stop_tx.take() {
                     let _ = tx.send(());
                 }
+                if let Some(tx) = stream_stop_tx.take() {
+                    let _ = tx.send(());
+                }
                 if let Some(h) = record_handle.take() {
+                    h.abort();
+                }
+                if let Some(h) = stream_handle.take() {
                     h.abort();
                 }
                 return;
             }
         }
+    }
+}
+
+fn new_recording_id(seq: u64) -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    format!("rec-{millis}-{seq}")
+}
+
+struct StreamingRunResult {
+    result: TranscribeResult,
+    metrics: TranscriptionMetrics,
+}
+
+async fn handle_successful_transcription(
+    result: TranscribeResult,
+    mut metrics: TranscriptionMetrics,
+    request_id: String,
+    profile_id: String,
+    config: &AppConfig,
+    event_tx: &broadcast::Sender<EngineEvent>,
+    state_tx: &watch::Sender<RecorderState>,
+) {
+    tracing::info!("transcription: {:?} ({}ms)", result.text, result.duration_ms);
+
+    if result.text.trim().is_empty() {
+        tracing::warn!("transcription was empty — skipping injection");
+        let _ = event_tx.send(EngineEvent::Error {
+            code: "empty_transcription".into(),
+            message: "识别结果为空，请再说一遍或检查识别语言设置".into(),
+        });
+        return;
+    }
+
+    set_state(state_tx, event_tx, RecorderState::Injecting);
+
+    let inject_started = Instant::now();
+    let inject_text = result.text.clone();
+    let paste_delay = config.inject.paste_delay_ms;
+    let post_paste_delay = config.inject.post_paste_delay_ms;
+    let restore = config.inject.restore_text_clipboard;
+
+    let inject_task = tokio::task::spawn_blocking(move || {
+        TextInjector::new(paste_delay, post_paste_delay, restore)
+            .inject_sync(inject_text)
+    });
+
+    let inject_result = timeout(POST_RECORDING_TIMEOUT, inject_task).await;
+    let injected = match inject_result {
+        Ok(Ok(Ok(()))) => {
+            tracing::info!("text injected");
+            true
+        }
+        Ok(Ok(Err(e))) => {
+            tracing::warn!("injection failed: {e}");
+            let _ = event_tx.send(EngineEvent::Error {
+                code: "inject".into(),
+                message: e.to_string(),
+            });
+            false
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("injection task panicked: {e}");
+            let _ = event_tx.send(EngineEvent::Error {
+                code: "inject".into(),
+                message: "injection panicked".into(),
+            });
+            false
+        }
+        Err(_) => {
+            tracing::error!("injection timed out");
+            let _ = event_tx.send(EngineEvent::Error {
+                code: "inject_timeout".into(),
+                message: "输入文字超时，请检查当前应用是否允许粘贴".into(),
+            });
+            false
+        }
+    };
+
+    metrics.inject_ms = inject_started.elapsed().as_millis() as u64;
+    metrics.total_ms = metrics.total_ms.saturating_add(metrics.inject_ms);
+
+    if injected {
+        let _ = event_tx.send(EngineEvent::Transcription {
+            request_id,
+            text: result.text,
+            duration_ms: result.duration_ms,
+            metrics,
+            profile_id,
+        });
     }
 }
 
@@ -464,6 +702,247 @@ fn audio_level(samples: &[f32]) -> AudioLevel {
     AudioLevel {
         rms: (sum_squares / samples.len() as f64).sqrt() as f32,
         peak,
+    }
+}
+
+async fn run_streaming_recording(
+    mut capture: AudioCapture,
+    mut stop: oneshot::Receiver<()>,
+    max_secs: u32,
+    profile_id: String,
+    profile: Option<LanguageProfile>,
+    config: AppConfig,
+    request_id: String,
+    event_tx: broadcast::Sender<EngineEvent>,
+) -> Result<StreamingRunResult, VoxError> {
+    let started = Instant::now();
+    let native_rate = capture.native_rate;
+    let (language_hint, prompt) = profile
+        .as_ref()
+        .map(|p| (p.language_hint.clone(), p.prompt.clone()))
+        .unwrap_or((None, None));
+    let mut resampler = if native_rate == TARGET_SAMPLE_RATE {
+        None
+    } else {
+        Some(AudioResampler::new(native_rate, TARGET_SAMPLE_RATE, 1).map_err(VoxError::from)?)
+    };
+    let mut native_buffer = Vec::new();
+    let mut pending_audio: Vec<Vec<f32>> = Vec::new();
+    let mut audio_duration_ms = 0u64;
+    let mut revision = 0u64;
+    let mut first_partial_ms = None;
+    let mut first_llm_ms = None;
+    let mut final_result: Option<TranscribeResult> = None;
+    let mut stream = None;
+    let mut ws_connect_ms = None;
+    let connect_started = Instant::now();
+    let connect_task = async {
+        let mut backend = build_backend(&profile_id, profile.as_ref(), &config)?;
+        backend.prepare().await.map_err(|e| VoxError::Other(anyhow::anyhow!("prepare: {e}")))?;
+        backend.start_stream(StreamTranscribeRequest {
+            sample_rate: TARGET_SAMPLE_RATE,
+            language_hint,
+            prompt,
+        }).await.map_err(|e| VoxError::Other(anyhow::anyhow!("{e}")))
+    };
+    tokio::pin!(connect_task);
+    let max_recording = tokio::time::sleep(Duration::from_secs(max_secs as u64));
+    tokio::pin!(max_recording);
+
+    loop {
+        tokio::select! {
+            connected = &mut connect_task, if stream.is_none() => {
+                let mut connected_stream = connected?;
+                ws_connect_ms = Some(connect_started.elapsed().as_millis() as u64);
+                for samples in pending_audio.drain(..) {
+                    connected_stream.send_audio(AudioChunk {
+                        samples,
+                        sample_rate: TARGET_SAMPLE_RATE,
+                    }).await.map_err(|e| VoxError::Other(anyhow::anyhow!("{e}")))?;
+                }
+                stream = Some(connected_stream);
+            }
+            _ = &mut stop => {
+                break;
+            }
+            _ = &mut max_recording => {
+                tracing::info!("max recording duration reached ({max_secs}s), auto-stopping streaming");
+                break;
+            }
+            maybe_chunk = capture.rx.recv() => {
+                let Some(chunk) = maybe_chunk else {
+                    break;
+                };
+                let level = audio_level(&chunk);
+                let _ = event_tx.send(EngineEvent::AudioLevel {
+                    rms: level.rms,
+                    peak: level.peak,
+                });
+
+                let samples = if let Some(resampler) = resampler.as_mut() {
+                    native_buffer.extend_from_slice(&chunk);
+                    if native_buffer.len() < resampler.input_chunk_size() {
+                        if let Some(stream) = stream.as_mut() {
+                            drain_stream_events(
+                                stream.as_mut(),
+                                &event_tx,
+                                &request_id,
+                                &mut revision,
+                                &mut first_partial_ms,
+                                &mut first_llm_ms,
+                                &mut final_result,
+                                started,
+                                Duration::from_millis(25),
+                            ).await?;
+                        }
+                        continue;
+                    }
+                    let (samples, consumed) = resampler
+                        .process_full_chunks_to_mono_16k(&native_buffer)
+                        .map_err(VoxError::from)?;
+                    native_buffer.drain(..consumed);
+                    samples
+                } else {
+                    chunk
+                };
+                if samples.is_empty() {
+                    continue;
+                }
+                audio_duration_ms = audio_duration_ms
+                    .saturating_add(((samples.len() as u64).saturating_mul(1000)) / TARGET_SAMPLE_RATE as u64);
+                if let Some(stream) = stream.as_mut() {
+                    stream.send_audio(AudioChunk {
+                        samples,
+                        sample_rate: TARGET_SAMPLE_RATE,
+                    }).await.map_err(|e| VoxError::Other(anyhow::anyhow!("{e}")))?;
+                    drain_stream_events(
+                        stream.as_mut(),
+                        &event_tx,
+                        &request_id,
+                        &mut revision,
+                        &mut first_partial_ms,
+                        &mut first_llm_ms,
+                        &mut final_result,
+                        started,
+                        Duration::from_millis(25),
+                    ).await?;
+                } else {
+                    pending_audio.push(samples);
+                }
+            }
+        }
+    }
+
+    if stream.is_none() {
+        let mut connected_stream = connect_task.await?;
+        ws_connect_ms = Some(connect_started.elapsed().as_millis() as u64);
+        for samples in pending_audio.drain(..) {
+            connected_stream.send_audio(AudioChunk {
+                samples,
+                sample_rate: TARGET_SAMPLE_RATE,
+            }).await.map_err(|e| VoxError::Other(anyhow::anyhow!("{e}")))?;
+        }
+        stream = Some(connected_stream);
+    }
+    let stream = stream.as_mut().expect("stream connected");
+
+    if let Some(resampler) = resampler.as_mut() {
+        let samples = resampler.process_to_mono_16k(&native_buffer).map_err(VoxError::from)?;
+        if !samples.is_empty() {
+            audio_duration_ms = audio_duration_ms
+                .saturating_add(((samples.len() as u64).saturating_mul(1000)) / TARGET_SAMPLE_RATE as u64);
+            stream.send_audio(AudioChunk {
+                samples,
+                sample_rate: TARGET_SAMPLE_RATE,
+            }).await.map_err(|e| VoxError::Other(anyhow::anyhow!("{e}")))?;
+        }
+    }
+
+    let flush_started = Instant::now();
+    let result = stream.finish().await.map_err(|e| VoxError::Other(anyhow::anyhow!("{e}")))?;
+    let flush_wait_ms = flush_started.elapsed().as_millis() as u64;
+    revision = revision.saturating_add(1);
+    let _ = event_tx.send(EngineEvent::TranscriptionUpdate {
+        request_id: request_id.clone(),
+        text: result.text.clone(),
+        is_final: true,
+        source: "final".into(),
+        revision,
+    });
+
+    let metrics = TranscriptionMetrics {
+        audio_duration_ms,
+        stop_capture_ms: 0,
+        asr_ms: started.elapsed().as_millis() as u64,
+        inject_ms: 0,
+        total_ms: started.elapsed().as_millis() as u64,
+        ws_connect_ms,
+        first_partial_ms,
+        first_llm_ms,
+        flush_wait_ms: Some(flush_wait_ms),
+    };
+
+    Ok(StreamingRunResult { result, metrics })
+}
+
+async fn drain_stream_events(
+    stream: &mut dyn vf_asr::StreamingTranscriber,
+    event_tx: &broadcast::Sender<EngineEvent>,
+    request_id: &str,
+    revision: &mut u64,
+    first_partial_ms: &mut Option<u64>,
+    first_llm_ms: &mut Option<u64>,
+    final_result: &mut Option<TranscribeResult>,
+    started: Instant,
+    drain_for: Duration,
+) -> Result<(), VoxError> {
+    let deadline = Instant::now() + drain_for;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Ok(());
+        }
+        let event = match timeout(remaining.min(Duration::from_millis(10)), stream.next_event()).await {
+            Ok(event) => event.map_err(|e| VoxError::Other(anyhow::anyhow!("{e}")))?,
+            Err(_) => return Ok(()),
+        };
+
+        match event {
+            StreamEvent::Ready { .. } => {}
+            StreamEvent::Partial { text } => {
+                if first_partial_ms.is_none() {
+                    *first_partial_ms = Some(started.elapsed().as_millis() as u64);
+                }
+                *revision = revision.saturating_add(1);
+                let _ = event_tx.send(EngineEvent::TranscriptionUpdate {
+                    request_id: request_id.to_string(),
+                    text,
+                    is_final: false,
+                    source: "transcript".into(),
+                    revision: *revision,
+                });
+            }
+            StreamEvent::Final { result } => {
+                if first_llm_ms.is_none() {
+                    *first_llm_ms = Some(started.elapsed().as_millis() as u64);
+                }
+                *revision = revision.saturating_add(1);
+                let _ = event_tx.send(EngineEvent::TranscriptionUpdate {
+                    request_id: request_id.to_string(),
+                    text: result.text.clone(),
+                    is_final: false,
+                    source: "llm".into(),
+                    revision: *revision,
+                });
+                *final_result = Some(result);
+            }
+            StreamEvent::FlushDone { result } => {
+                *final_result = Some(result);
+                return Ok(());
+            }
+            StreamEvent::Error { message } => return Err(VoxError::Other(anyhow::anyhow!(message))),
+        }
+
     }
 }
 
@@ -531,6 +1010,9 @@ fn build_backend(
             transport,
             enable_timestamps,
             enable_speaker_diarization,
+            enable_llm_transform,
+            llm_model_id,
+            llm_max_tokens,
         }) => {
             tracing::info!("building VoxNexus ASR backend for profile '{profile_id}' model '{model_id}'");
             let (raw_key, key_source) = api_key.as_deref()
@@ -555,7 +1037,13 @@ fn build_backend(
                 model_id.as_str(),
                 *enable_timestamps,
                 *enable_speaker_diarization,
-            ).with_transport(to_asr_transport(*transport))))
+            )
+            .with_transport(to_asr_transport(*transport))
+            .with_llm_transform(
+                *enable_llm_transform,
+                llm_model_id.clone(),
+                *llm_max_tokens,
+            )))
         }
         Some(ProfileBackendConfig::Local { transport, .. }) => {
             if !matches!(transport, AsrTransportKind::LocalBatch) {
@@ -613,6 +1101,16 @@ fn key_fingerprint(key: &str) -> String {
     let suffix_rev: String = key.chars().rev().take(4).collect();
     let suffix: String = suffix_rev.chars().rev().collect();
     format!("len={len}, suffix=...{suffix}")
+}
+
+fn is_voxnexus_websocket_profile(profile: Option<&LanguageProfile>) -> bool {
+    matches!(
+        profile.map(|profile| &profile.backend),
+        Some(ProfileBackendConfig::VoxNexus {
+            transport: AsrTransportKind::WebSocketStreaming,
+            ..
+        })
+    )
 }
 
 async fn accumulate(
@@ -747,7 +1245,9 @@ mod tests {
         match event {
             EngineEvent::Transcription { text, .. } => assert_eq!(text, "hello world"),
             EngineEvent::Error { message, .. } => panic!("unexpected error: {message}"),
-            EngineEvent::StateChanged { .. } | EngineEvent::AudioLevel { .. } => {}
+            EngineEvent::StateChanged { .. }
+            | EngineEvent::AudioLevel { .. }
+            | EngineEvent::TranscriptionUpdate { .. } => {}
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(engine.state(), RecorderState::Idle);

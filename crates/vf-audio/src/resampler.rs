@@ -54,4 +54,38 @@ impl AudioResampler {
         }
         Ok(output)
     }
+
+    pub fn input_chunk_size(&self) -> usize {
+        self.chunk_size
+    }
+
+    pub fn process_full_chunks_to_mono_16k(&mut self, samples: &[f32]) -> Result<(Vec<f32>, usize), AudioError> {
+        let full_len = (samples.len() / self.chunk_size) * self.chunk_size;
+        if full_len == 0 {
+            return Ok((Vec::new(), 0));
+        }
+
+        let mono: Vec<f32> = if self.input_channel_count == 1 {
+            samples[..full_len].to_vec()
+        } else {
+            let ch = self.input_channel_count;
+            let frame_len = (full_len / ch) * ch;
+            samples[..frame_len]
+                .chunks(ch)
+                .map(|frame| frame.iter().sum::<f32>() / ch as f32)
+                .collect()
+        };
+
+        let mut output = Vec::new();
+        let mut pos = 0;
+        while pos + self.chunk_size <= mono.len() {
+            let chunk = mono[pos..pos + self.chunk_size].to_vec();
+            let resampled = self.resampler.process(&[chunk], None)
+                .map_err(|e| AudioError::Resampler(e.to_string()))?;
+            output.extend_from_slice(&resampled[0]);
+            pos += self.chunk_size;
+        }
+
+        Ok((output, full_len))
+    }
 }

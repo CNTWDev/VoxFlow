@@ -147,8 +147,11 @@ fn default_profiles() -> HashMap<String, LanguageProfile> {
                 transport: AsrTransportKind::RestBatch,
                 enable_timestamps: false,
                 enable_speaker_diarization: false,
+                enable_llm_transform: true,
+                llm_model_id: None,
+                llm_max_tokens: Some(1024),
             },
-            prompt: None,
+            prompt: Some("将我的口语整理成简洁、自然、专业的简体中文，保留必要的中英文混排。".to_string()),
         });
         map
     }

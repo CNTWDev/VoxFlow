@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/vf-agent-os",
     "crates/vf-audio",
     "crates/vf-asr",
     "crates/vf-inject",

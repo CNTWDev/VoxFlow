@@ -409,10 +409,33 @@
       margin-bottom: 8px;
     }
 
+    .history-metrics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .history-metric {
+      border: 1px solid rgba(255,255,255,.11);
+      border-radius: 999px;
+      padding: 3px 8px;
+      color: rgba(246,239,224,.78);
+      font-size: 11px;
+      line-height: 1.3;
+      background: rgba(255,255,255,.04);
+    }
+
     .history-text {
       white-space: pre-wrap;
       line-height: 1.55;
       font-size: 14px;
+    }
+
+    .stream-change {
+      border-radius: 5px;
+      background: rgba(125, 230, 194, .18);
+      box-shadow: 0 0 0 2px rgba(125, 230, 194, .05);
     }
 
     .note {
@@ -765,6 +788,15 @@
             <div class="grid" style="margin-top:12px">
               <label><span><input id="timestamps" type="checkbox" style="width:auto"> <span data-i18n="timestamps">Timestamps</span></span></label>
               <label><span><input id="diarization" type="checkbox" style="width:auto"> <span data-i18n="diarization">Speaker diarization</span></span></label>
+              <label><span><input id="llm-transform" type="checkbox" style="width:auto"> <span data-i18n="llmTransform">LLM polish</span></span></label>
+            </div>
+            <div class="grid" id="llm-settings" style="margin-top:12px">
+              <label><span data-i18n="llmModel">LLM model</span>
+                <input id="llm-model" data-i18n-placeholder="llmModelPlaceholder" placeholder="Server default" />
+              </label>
+              <label><span data-i18n="llmMaxTokens">LLM max tokens</span>
+                <input id="llm-max-tokens" type="number" min="1" max="4096" placeholder="1024" />
+              </label>
             </div>
             <p id="provider-capabilities" class="note"></p>
           </div>
@@ -867,6 +899,10 @@
         transport: '请求方式',
         timestamps: '时间戳',
         diarization: '区分说话人',
+        llmTransform: 'LLM 润色',
+        llmModel: 'LLM 模型',
+        llmModelPlaceholder: '留空使用服务默认',
+        llmMaxTokens: 'LLM 最大输出 tokens',
         profile: '配置',
         activeProfile: '当前配置',
         displayName: '显示名称',
@@ -885,6 +921,7 @@
         noActiveProfile: '未配置',
         supports: '当前服务支持：{items}',
         capabilityPrompt: '整理要求',
+        capabilityLlm: 'LLM 润色',
         capabilityTimestamps: '时间戳',
         capabilityDiarization: '区分说话人',
         permissionRequired: '还需要开启系统权限',
@@ -932,6 +969,10 @@
         transport: 'Request mode',
         timestamps: 'Timestamps',
         diarization: 'Separate speakers',
+        llmTransform: 'LLM polish',
+        llmModel: 'LLM model',
+        llmModelPlaceholder: 'Use server default when empty',
+        llmMaxTokens: 'LLM max tokens',
         profile: 'Profile',
         activeProfile: 'Active profile',
         displayName: 'Display name',
@@ -950,6 +991,7 @@
         noActiveProfile: 'Not configured',
         supports: 'This service supports: {items}',
         capabilityPrompt: 'writing guidance',
+        capabilityLlm: 'LLM polish',
         capabilityTimestamps: 'timestamps',
         capabilityDiarization: 'speaker separation',
         permissionRequired: 'System permissions required',
@@ -1069,7 +1111,17 @@
       const current = activeProfile();
       let backend;
       if (providerType === 'VoxNexus') {
-        backend = { type: 'VoxNexus', model_id: 'vn-stt-ultra', api_key: null, transport: 'rest_batch', enable_timestamps: false, enable_speaker_diarization: false };
+        backend = {
+          type: 'VoxNexus',
+          model_id: 'vn-stt-ultra',
+          api_key: null,
+          transport: 'rest_batch',
+          enable_timestamps: false,
+          enable_speaker_diarization: false,
+          enable_llm_transform: true,
+          llm_model_id: null,
+          llm_max_tokens: 1024,
+        };
       } else if (providerType === 'Local') {
         backend = { type: 'Local', model_path: current?.backend?.model_path || '', transport: 'local_batch' };
       } else {
@@ -1190,13 +1242,21 @@
       $('transport').value = backend.transport || (selectedProviderId === 'local_whisper' ? 'local_batch' : 'rest_batch');
       $('timestamps').checked = !!backend.enable_timestamps;
       $('diarization').checked = !!backend.enable_speaker_diarization;
+      $('llm-transform').checked = !!backend.enable_llm_transform;
+      $('llm-model').value = backend.llm_model_id || '';
+      $('llm-max-tokens').value = backend.llm_max_tokens || '';
       $('timestamps').disabled = !caps.timestamps;
       $('diarization').disabled = !caps.speaker_diarization;
+      $('llm-transform').disabled = !caps.llm_transform;
+      $('llm-model').disabled = !caps.llm_transform || !$('llm-transform').checked;
+      $('llm-max-tokens').disabled = !caps.llm_transform || !$('llm-transform').checked;
+      $('llm-settings').style.display = caps.llm_transform ? 'grid' : 'none';
       $('transport').disabled = selectedProviderId === 'local_whisper';
 
       const capList = [
         ...(provider?.transports || []),
         caps.prompt ? t('capabilityPrompt') : null,
+        caps.llm_transform ? t('capabilityLlm') : null,
         caps.timestamps ? t('capabilityTimestamps') : null,
         caps.speaker_diarization ? t('capabilityDiarization') : null,
       ].filter(Boolean);
@@ -1218,6 +1278,9 @@
           transport,
           enable_timestamps: $('timestamps').checked,
           enable_speaker_diarization: $('diarization').checked,
+          enable_llm_transform: $('llm-transform').checked,
+          llm_model_id: $('llm-model').value.trim() || null,
+          llm_max_tokens: $('llm-max-tokens').value ? Number($('llm-max-tokens').value) : null,
         };
       } else {
         backend = { type: 'Local', model_path: $('local-model-path').value.trim(), transport: 'local_batch' };
@@ -1241,14 +1304,66 @@
       localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
     }
 
-    function addHistoryItem(text, durationMs, profileId) {
-      history.unshift({
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    function renderStreamingText(nextText) {
+      const current = resultEl.textContent || '';
+      if (!current || resultEl.className === 'empty') {
+        resultEl.textContent = nextText;
+        resultEl.className = '';
+        return;
+      }
+
+      let prefix = 0;
+      const minLen = Math.min(current.length, nextText.length);
+      while (prefix < minLen && current[prefix] === nextText[prefix]) prefix += 1;
+
+      let currentSuffix = current.length;
+      let nextSuffix = nextText.length;
+      while (
+        currentSuffix > prefix &&
+        nextSuffix > prefix &&
+        current[currentSuffix - 1] === nextText[nextSuffix - 1]
+      ) {
+        currentSuffix -= 1;
+        nextSuffix -= 1;
+      }
+
+      const before = nextText.slice(0, prefix);
+      const changed = nextText.slice(prefix, nextSuffix);
+      const after = nextText.slice(nextSuffix);
+      resultEl.innerHTML = '';
+      resultEl.append(document.createTextNode(before));
+      if (changed) {
+        const mark = document.createElement('span');
+        mark.className = 'stream-change';
+        mark.textContent = changed;
+        resultEl.append(mark);
+      }
+      resultEl.append(document.createTextNode(after));
+      resultEl.className = '';
+    }
+
+    function formatMs(value) {
+      const ms = Number(value || 0);
+      if (ms >= 1000) return `${(ms / 1000).toFixed(ms >= 10000 ? 1 : 2)}s`;
+      return `${ms}ms`;
+    }
+
+    function addHistoryItem(text, durationMs, profileId, requestId, metrics = null) {
+      const id = requestId || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const existingIndex = history.findIndex(item => item.id === id);
+      const existing = existingIndex >= 0 ? history[existingIndex] : null;
+      const item = {
+        id,
         text,
         durationMs,
+        metrics,
         profileId,
-        createdAt: new Date().toISOString(),
-      });
+        createdAt: existing?.createdAt || new Date().toISOString(),
+      };
+      if (existingIndex >= 0) {
+        history.splice(existingIndex, 1);
+      }
+      history.unshift(item);
       history = history.slice(0, MAX_HISTORY);
       saveHistory();
       renderHistory();
@@ -1265,10 +1380,25 @@
         const row = document.createElement('div');
         row.className = 'history-item';
         const time = new Date(item.createdAt).toLocaleString();
+        const metrics = item.metrics || {};
+        const metricItems = [
+          ['录音', metrics.audio_duration_ms ?? item.durationMs],
+          ['停录', metrics.stop_capture_ms],
+          ['连接', metrics.ws_connect_ms],
+          ['首字', metrics.first_partial_ms],
+          ['首改', metrics.first_llm_ms],
+          ['收尾', metrics.flush_wait_ms],
+          ['ASR/LLM', metrics.asr_ms],
+          ['注入', metrics.inject_ms],
+          ['总计', metrics.total_ms],
+        ].filter(([, value]) => value !== undefined && value !== null);
         row.innerHTML = `
           <div class="history-meta">
             <span>${time}</span>
-            <span>${item.profileId || 'unknown'} · ${item.durationMs || 0}ms</span>
+            <span>${item.profileId || 'unknown'}</span>
+          </div>
+          <div class="history-metrics">
+            ${metricItems.map(([label, value]) => `<span class="history-metric">${label} ${formatMs(value)}</span>`).join('')}
           </div>
           <div class="history-text"></div>
         `;
@@ -1460,6 +1590,10 @@
       renderProviderTabs();
       renderSettingsForProfile(profile);
     };
+    $('llm-transform').onchange = () => {
+      $('llm-model').disabled = !$('llm-transform').checked;
+      $('llm-max-tokens').disabled = !$('llm-transform').checked;
+    };
     $('btn-clear-history').onclick = () => {
       history = [];
       saveHistory();
@@ -1484,11 +1618,14 @@
     listen('vox://event', event => {
       const data = event.payload;
       if (!data || !data.type) return;
-      if (data.type === 'Transcription') {
+      if (data.type === 'TranscriptionUpdate') {
+        renderStreamingText(data.text || '');
+        errorEl.textContent = '';
+      } else if (data.type === 'Transcription') {
         resultEl.textContent = data.text;
         resultEl.className = '';
         errorEl.textContent = '';
-        addHistoryItem(data.text, data.duration_ms, data.profile_id);
+        addHistoryItem(data.text, data.duration_ms, data.profile_id, data.request_id, data.metrics);
         updateUI('Idle');
       } else if (data.type === 'Error') {
         errorEl.textContent = data.message;

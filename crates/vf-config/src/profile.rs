@@ -34,6 +34,12 @@ pub enum ProfileBackendConfig {
         enable_timestamps: bool,
         #[serde(default)]
         enable_speaker_diarization: bool,
+        #[serde(default)]
+        enable_llm_transform: bool,
+        #[serde(default)]
+        llm_model_id: Option<String>,
+        #[serde(default)]
+        llm_max_tokens: Option<u32>,
     },
     Local {
         model_path: PathBuf,

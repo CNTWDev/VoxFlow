@@ -103,12 +103,16 @@ model = "gpt-4o-mini-transcribe"
 
 [profiles.vn]
 display_name = "VoxNexus 超清"
+prompt = "将我的口语整理成简洁、自然、专业的简体中文，保留必要的中英文混排。"
 [profiles.vn.backend]
 type = "VoxNexus"
 model_id = "vn-stt-ultra"
 transport = "web_socket_streaming" # 或 "rest_batch"
 enable_timestamps = false
 enable_speaker_diarization = false
+enable_llm_transform = true
+llm_model_id = ""                  # 留空使用服务端默认 LLM
+llm_max_tokens = 1024
 
 [profiles.en-local]
 display_name = "English (Offline)"
@@ -132,9 +136,11 @@ VoxNexus profile 可选择两种请求方式：
 | transport | 说明 |
 |---|---|
 | `rest_batch` | 停止录音后上传完整 WAV，返回最终文本 |
-| `web_socket_streaming` | 连接 `wss://api.voxnexus.ai/v1/stt/realtime?token=...`，发送 PCM16 audio chunks，接收 `ready` / `partial` / `final` / `error` |
+| `web_socket_streaming` | 连接 `wss://api.voxnexus.ai/v1/stt/realtime?token=...`，发送 PCM16 audio chunks，接收 `ready` / `transcript` / `llm` / `flush_done` / `error` |
 
-当前版本已经在 `vf-asr` 层实现 VoxNexus `StreamingTranscriber`，包括 partial/final 事件解析。应用主流程仍是“松开热键后转写并注入”；真正边录边显示 partial 的 UI 流式体验会在录音管线改为边采集边推送后接上。
+REST 请求使用 `X-Api-Key` header 鉴权；WebSocket 继续使用 `?token=...`，服务端也支持 `X-Api-Key` header。VoxNexus LLM 润色由 `enable_llm_transform` 控制，开启后会把 profile 的 `prompt` 作为 `llm_prompt` 发送。
+
+当前版本已经在 `vf-asr` 层实现 VoxNexus `StreamingTranscriber`，包括 transcript/LLM 事件解析。应用主流程仍是“松开热键后转写并注入”；真正边录边显示 partial 的 UI 流式体验会在录音管线改为边采集边推送后接上。
 
 ---
 
@@ -143,6 +149,7 @@ VoxNexus profile 可选择两种请求方式：
 ```
 vox-flow/
 ├── crates/
+│   ├── vf-agent-os/   # 轻量 Agent OS：prompt 编译 + memory/skill/context/session 文件协议
 │   ├── vf-audio/      # 麦克风采集 + 重采样到 16kHz mono f32
 │   ├── vf-asr/        # AsrBackend trait，OpenAI + VoxNexus + Local（Whisper.cpp）
 │   ├── vf-inject/     # 剪贴板注入 + enigo 模拟粘贴
@@ -152,6 +159,15 @@ vox-flow/
 ```
 
 所有 `vf-*` crate 不依赖 Tauri，可单独 `cargo test`。
+
+### Agent OS
+
+仓库内包含一个轻量 `.agent-os/` 规范和 `vf-agent-os` crate，用来沉淀 Hermes Agent 风格的上下文组织方式：
+
+- `SOUL.md` / `AGENTS.md` / `MEMORY.md` / `USER.md` 组成稳定上下文层。
+- `skills/<name>/SKILL.md` 只在 system prompt 中暴露索引，完整内容按需加载。
+- `PromptCompiler` 输出 `cached_system` 与 `ephemeral_context`，便于后续接入 CLI、Web 或其他 agent runtime。
+- 首版只使用 Markdown 文件和 JSONL session 记录，不引入数据库或向量检索。
 
 ---
 
